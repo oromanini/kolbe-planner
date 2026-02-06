@@ -280,7 +280,7 @@ export default function LandingPage() {
               data-testid="cta-title"
             >
               Pronto para ser<br />
-              <span className="text-gradient-red">imparável?</span>
+              <span className="text-primary">imparável?</span>
             </h2>
             <p className="text-xl text-slate-400 mb-12 max-w-2xl mx-auto">
               Zero fricção. Zero complexidade. Apenas você construindo a melhor versão de si mesmo.
