@@ -136,7 +136,7 @@ export default function Dashboard() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div>
-            <h1 className="font-heading text-2xl font-bold text-gradient-gold flex items-center gap-2" data-testid="dashboard-title">
+            <h1 className="font-heading text-2xl font-bold text-gradient-red flex items-center gap-2" data-testid="dashboard-title">
               <Sparkles className="w-6 h-6 text-primary" />
               Kolbe
             </h1>
