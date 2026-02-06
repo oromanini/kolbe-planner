@@ -17,8 +17,30 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background text-white overflow-hidden">
+      {/* Fixed Logo Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-background-paper/50 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img 
+              src="https://customer-assets.emergentagent.com/job_dayminder-4/artifacts/sptbro7d_Kolbe%20Planner%20%282%29.png" 
+              alt="Kolbe Planner" 
+              className="h-10 w-10 object-contain"
+            />
+            <span className="font-heading text-xl font-medium text-white">
+              Kolbe Planner
+            </span>
+          </div>
+          <button 
+            onClick={handleLogin}
+            className="text-sm font-body text-slate-400 hover:text-white transition-colors"
+          >
+            Entrar
+          </button>
+        </div>
+      </header>
+
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center px-4">
+      <section className="relative min-h-screen flex items-center justify-center px-4 pt-20">
         {/* Background with overlay */}
         <div className="absolute inset-0 bg-gradient-hero"></div>
         <div 
