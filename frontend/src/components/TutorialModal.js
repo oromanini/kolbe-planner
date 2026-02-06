@@ -45,7 +45,7 @@ export default function TutorialModal({ onComplete, onClose }) {
               </motion.div>
               <h2 className="font-heading text-4xl font-medium text-white mb-4">
                 Bem-vindo ao<br />
-                <span className="text-gradient-red">Kolbe Planner</span>
+                <span className="text-primary">Kolbe Planner</span>
               </h2>
               <p className="text-slate-400 font-body leading-relaxed text-lg">
                 Configure seus hábitos e comece sua jornada<br />de constância e disciplina.
