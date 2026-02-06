@@ -1,170 +1,172 @@
 {
+  "identity": {
+    "name": "DayMinder / Kolbe Planner",
+    "persona": "The Architect of Ambition",
+    "vibe": "Premium, Intense, Seductive, Disciplined",
+    "archetype": "The Performance Pro x Jewel Luxury",
+    "emotional_goal": "Evoke a sense of elite discipline and luxurious progress. The user should feel like a CEO of their own life."
+  },
   "typography": {
     "font_family": {
-      "headings": "Playfair Display, serif",
+      "headings": "Syne, sans-serif",
       "body": "Manrope, sans-serif",
-      "mono": "JetBrains Mono, monospace"
+      "accent": "Playfair Display, serif"
     },
     "weights": {
-      "headings": "600",
-      "body_regular": "400",
-      "body_medium": "500",
-      "body_bold": "700"
+      "headings": "700, 800",
+      "body": "400, 500",
+      "accent": "400, 600"
     },
-    "sizes": {
-      "h1": "text-5xl md:text-6xl tracking-tight leading-none",
+    "scale": {
+      "h1": "text-5xl md:text-7xl tracking-tight leading-none",
       "h2": "text-4xl md:text-5xl tracking-tight",
-      "h3": "text-2xl md:text-3xl tracking-normal",
-      "body_lg": "text-lg leading-relaxed",
-      "body_base": "text-base leading-relaxed",
-      "caption": "text-sm tracking-wide uppercase text-muted-foreground"
+      "h3": "text-2xl md:text-3xl font-semibold",
+      "body": "text-base md:text-lg leading-relaxed",
+      "caption": "text-xs tracking-widest uppercase opacity-70"
     },
-    "usage_rules": [
-      "Use Playfair Display for all major headings (H1-H3) to evoke a 'classic planner' feel.",
-      "Use Manrope for all UI elements, calendar dates, and data inputs for maximum legibility.",
-      "Never use Inter.",
-      "Headings must have tight tracking (-0.02em).",
-      "Captions/Labels must be uppercase with wide tracking (0.05em)."
-    ]
+    "installation": "Import via Google Fonts in index.css: @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Syne:wght@400;700;800&display=swap');"
   },
   "colors": {
     "palette": {
+      "background": {
+        "default": "#0B1120",
+        "paper": "#151E32",
+        "subtle": "#1E293B"
+      },
       "primary": {
-        "DEFAULT": "#0F1B2D",
-        "foreground": "#FFFFFF",
-        "description": "Deep Navy - Used for primary actions, active states, and strong borders."
+        "main": "#D4AF37",
+        "light": "#F3E5AB",
+        "dark": "#8F7524",
+        "foreground": "#000000"
       },
       "secondary": {
-        "DEFAULT": "#C0392B",
-        "foreground": "#FFFFFF",
-        "description": "Imperial Red (Softened) - Used for 'Missed' states, alerts, or secondary highlights."
+        "main": "#E11D48",
+        "light": "#FB7185",
+        "dark": "#881337",
+        "foreground": "#FFFFFF"
       },
-      "accent": {
-        "DEFAULT": "#F2E6C9",
-        "foreground": "#0F1B2D",
-        "description": "Light Gold - RESERVED for 'Victory' states (100% completion) and premium highlights."
+      "neutral": {
+        "50": "#F8FAFC",
+        "100": "#F1F5F9",
+        "200": "#E2E8F0",
+        "300": "#CBD5E1",
+        "400": "#94A3B8",
+        "500": "#64748B",
+        "600": "#475569",
+        "700": "#334155",
+        "800": "#1E293B",
+        "900": "#0F172A",
+        "950": "#020617"
       },
-      "background": {
-        "DEFAULT": "#FAF9F7",
-        "paper": "#FFFFFF",
-        "description": "Warm Off-white - Main app background. Must feel like high-quality paper."
-      },
-      "text": {
-        "primary": "#1C1C1C",
-        "secondary": "#8A8F98",
-        "muted": "#D1D5DB"
-      },
-      "border": {
-        "DEFAULT": "#E5E7EB",
-        "strong": "#0F1B2D"
+      "semantic": {
+        "success": "#10B981",
+        "warning": "#F59E0B",
+        "error": "#EF4444",
+        "info": "#3B82F6"
       }
     },
-    "tailwind_config_extension": {
-      "colors": {
-        "navy": "#0F1B2D",
-        "imperial-red": "#C0392B",
-        "victory-gold": "#F2E6C9",
-        "paper": "#FAF9F7"
-      }
-    },
-    "rules": [
-      "NO DARK MODE for the main interface. The app must feel like a physical paper planner.",
-      "Use the 'Victory Gold' (#F2E6C9) ONLY when a user completes all habits for the day or achieves a streak.",
-      "Backgrounds must be #FAF9F7 (Warm Off-white), not pure #FFFFFF.",
-      "Cards and Calendar Cells can be #FFFFFF to create subtle depth against the #FAF9F7 background."
-    ]
+    "gradients": {
+      "hero": "linear-gradient(135deg, #0B1120 0%, #151E32 100%)",
+      "gold_glow": "linear-gradient(45deg, #D4AF37 0%, #F3E5AB 50%, #8F7524 100%)",
+      "red_lust": "linear-gradient(to bottom, rgba(225, 29, 72, 0.1), transparent)"
+    }
   },
   "visual_enhancers": {
-    "textures": [
-      "Apply a subtle 'noise' texture (opacity 2-3%) over the entire app to simulate paper grain.",
-      "Use 'multiply' blend mode for text to make it look 'printed' on the screen."
-    ],
-    "shadows": {
-      "card": "0 1px 2px rgba(15, 27, 45, 0.05)",
-      "hover": "0 4px 12px rgba(15, 27, 45, 0.08)",
-      "victory": "0 0 20px rgba(242, 230, 201, 0.6)"
+    "glassmorphism": {
+      "default": "bg-slate-900/40 backdrop-blur-xl border border-white/10 shadow-2xl",
+      "heavy": "bg-slate-950/80 backdrop-blur-2xl border border-white/5",
+      "hover": "hover:bg-slate-800/50 hover:border-white/20 transition-all duration-300"
     },
     "borders": {
-      "default": "1px solid #E5E7EB",
-      "active": "1px solid #0F1B2D",
-      "radius": "rounded-none (for grid cells) or rounded-sm (for buttons) - Keep it sharp and disciplined."
+      "subtle": "border border-white/5",
+      "highlight": "border border-primary/30",
+      "glow": "ring-1 ring-primary/50 shadow-[0_0_15px_rgba(212,175,55,0.3)]"
+    },
+    "shadows": {
+      "card": "shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+      "glow": "shadow-[0_0_20px_rgba(212,175,55,0.15)]"
+    },
+    "radius": {
+      "default": "rounded-xl",
+      "button": "rounded-full",
+      "card": "rounded-2xl"
+    }
+  },
+  "layout": {
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grid_system": {
+      "dashboard": "grid grid-cols-1 md:grid-cols-12 gap-6",
+      "features": "grid grid-cols-1 md:grid-cols-3 gap-8"
+    },
+    "spacing": {
+      "section": "py-24 md:py-32",
+      "element": "mb-6 md:mb-8"
     }
   },
   "components": {
     "buttons": {
-      "primary": "bg-navy text-white hover:bg-navy/90 rounded-sm px-6 py-2 font-medium transition-all",
-      "secondary": "border border-navy text-navy hover:bg-navy/5 rounded-sm px-6 py-2 font-medium transition-all",
-      "ghost": "text-navy/60 hover:text-navy hover:bg-navy/5 rounded-sm px-4 py-2 transition-all"
-    },
-    "calendar_grid": {
-      "container": "grid grid-cols-7 gap-px bg-border border border-border",
-      "cell": "bg-white aspect-square p-2 relative hover:bg-gray-50 transition-colors cursor-pointer group",
-      "cell_active": "ring-1 ring-inset ring-navy z-10",
-      "cell_victory": "bg-victory-gold/30"
-    },
-    "habit_tracker": {
-      "indicator": "h-1.5 w-1.5 rounded-full bg-navy/20",
-      "indicator_completed": "bg-navy"
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 font-bold tracking-wide px-8 py-4 rounded-full transition-all hover:scale-105 active:scale-95",
+      "secondary": "bg-transparent border border-white/20 text-white hover:bg-white/5 hover:border-white/40 px-8 py-4 rounded-full transition-all",
+      "ghost": "text-neutral-400 hover:text-white hover:bg-white/5 px-4 py-2 rounded-lg transition-colors"
     },
     "cards": {
-      "base": "bg-white border border-border p-6 shadow-sm"
+      "base": "bg-slate-900/40 backdrop-blur-md border border-white/10 rounded-2xl p-8 hover:border-primary/30 transition-colors group relative overflow-hidden",
+      "highlight": "bg-gradient-to-br from-slate-900/80 to-slate-900/40 border border-primary/20 rounded-2xl p-8 relative"
+    },
+    "inputs": {
+      "default": "bg-slate-950/50 border border-white/10 rounded-lg px-4 py-3 text-white placeholder:text-neutral-600 focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all outline-none"
     }
-  },
-  "layout": {
-    "grid_system": "Use a strict 7-column grid for the calendar. For the dashboard, use a 'Bento' style layout: Calendar (Dominant, col-span-5) + Habit List/Stats (Sidebar, col-span-2).",
-    "spacing": "Use generous padding (p-8, p-12) to create a sense of calm and focus. Avoid clutter.",
-    "alignment": "Center the calendar for focus. Left-align text for readability."
   },
   "motion": {
     "library": "framer-motion",
-    "animations": {
-      "check_mark": "Scale up from 0 to 1 with a spring effect.",
-      "page_transition": "Opacity fade (0.3s ease).",
-      "victory_flash": "Flash the cell background gold upon 100% completion."
-    },
-    "reduced_motion": "Disable scale/slide effects, use opacity only."
-  },
-  "accessibility": {
-    "contrast": "Ensure text (#1C1C1C) on background (#FAF9F7) meets APCA standards.",
-    "focus_states": "Visible focus ring (#0F1B2D) with 2px offset.",
-    "aria_labels": "All calendar cells must have aria-labels (e.g., 'January 1st, 3 of 5 habits completed')."
-  },
-  "media": {
-    "icons": "Lucide React (Stroke width: 1.5px for elegance).",
-    "images": "Use high-quality, minimalist photography. No generic 3D renders."
+    "variants": {
+      "fadeInUp": {
+        "initial": { "opacity": 0, "y": 20 },
+        "animate": { "opacity": 1, "y": 0 },
+        "transition": { "duration": 0.5, "ease": "easeOut" }
+      },
+      "staggerContainer": {
+        "animate": { "transition": { "staggerChildren": 0.1 } }
+      },
+      "hoverScale": {
+        "whileHover": { "scale": 1.02 },
+        "whileTap": { "scale": 0.98 }
+      }
+    }
   },
   "image_urls": {
-    "landing_hero": {
-      "url": "https://images.unsplash.com/photo-1764755932155-dabbee87df7e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
-      "description": "Minimalist desk setup with laptop and sunlight",
-      "category": "hero"
+    "hero_bg": {
+      "url": "https://images.unsplash.com/photo-1761437855740-c894da924d79?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Abstract gold lines on black, use as hero background with overlay",
+      "category": "background"
     },
-    "planning_moment": {
-      "url": "https://images.unsplash.com/photo-1759296844873-e0c694c24284?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
-      "description": "Notebook with pen and smartphone, focus on planning",
+    "focus_mode": {
+      "url": "https://images.unsplash.com/photo-1758520145147-c30bc656f314?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Man working late in dark office, use for 'Focus Mode' feature section",
       "category": "feature"
     },
-    "calm_workspace": {
-      "url": "https://images.unsplash.com/photo-1512236092577-9bd0e8cf5941?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHw0fHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
-      "description": "Clean iMac workspace, beige tones",
-      "category": "background"
+    "texture_accent": {
+      "url": "https://images.unsplash.com/photo-1643324896137-f0928e76202a?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "description": "Black and gold texture, use for card backgrounds or subtle overlays",
+      "category": "texture"
     }
   },
   "instructions_to_main_agent": [
-    "1. SETUP: Install 'lucide-react', 'framer-motion', 'clsx', 'tailwind-merge'.",
-    "2. THEME: Configure tailwind.config.js with the custom colors (navy, imperial-red, victory-gold, paper).",
-    "3. FONTS: Import Playfair Display and Manrope from Google Fonts in index.css.",
-    "4. LAYOUT: Build the 'CalendarGrid' component first. It is the heart of the app. It must be a CSS Grid with 7 columns.",
-    "5. INTERACTION: The 'DayCell' must be clickable. Clicking opens a Modal (Dialog) to check off habits.",
-    "6. VICTORY: Implement the logic: If (completed_habits == total_habits) -> Apply 'bg-victory-gold' to the cell.",
-    "7. LANDING: Use the provided image URLs for the hero section. Keep the landing page text minimal and stoic.",
-    "8. ADMIN: The admin area should be functional but keep the same aesthetic. No 'bootstrap' admin templates."
+    "1. SETUP: Ensure 'framer-motion', 'clsx', 'tailwind-merge' are installed.",
+    "2. THEME: Force DARK MODE. Do not implement a light mode toggle. The app is exclusively dark.",
+    "3. FONTS: Add the Google Fonts import to 'frontend/src/index.css' immediately.",
+    "4. TAILWIND: Update 'frontend/tailwind.config.js' to include the custom colors (navy, gold, imperial red) and font families.",
+    "5. LAYOUT: Use the 'Bento Grid' strategy for the dashboard. Avoid equal-sized boxes. Create hierarchy.",
+    "6. COMPONENTS: Build a 'GlassCard' component that encapsulates the glassmorphism styles to ensure consistency.",
+    "7. HERO: The Hero section must use the 'hero_bg' image with a heavy gradient overlay (to bottom) so text is readable. Headline must be massive (text-6xl+).",
+    "8. CALENDAR: The monthly calendar is the core. 100% days must glow Gold. Missed days are subtle Red. Incomplete days are neutral.",
+    "9. TESTING: Add 'data-testid' to all interactive elements (buttons, inputs, habit toggles)."
   ],
-  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
-    "DO NOT use gradients. Use solid colors and whitespace.",
-    "DO NOT use 'Inter' font.",
-    "Ensure all interactive elements have 'data-testid'.",
-    "Use 'sonner' for toast notifications (e.g., 'Habit completed').",
-    "Maintain the 'Paper Planner' aesthetic: Clean, sharp, disciplined."
+  "universal_guidelines": [
+    "Avoid 'AI Slop': No generic centered layouts. Use asymmetry.",
+    "No Gradients on Text unless it's a very subtle gold shimmer on the main headline.",
+    "Micro-interactions: Every button must have a hover state. Every list item must fade in.",
+    "Spacing: Double the default spacing. If you think 'p-4' is enough, use 'p-8'.",
+    "Contrast: Ensure text is readable on dark backgrounds. Use 'text-slate-200' for body, not 'text-gray-500'."
   ]
 }
