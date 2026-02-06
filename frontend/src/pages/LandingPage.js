@@ -115,7 +115,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <motion.div {...fadeInUp} className="text-center mb-20">
             <h2 
-              className="font-heading text-5xl md:text-6xl font-bold text-white mb-6 tracking-tight"
+              className="font-heading text-5xl md:text-6xl font-medium text-white mb-6 tracking-tight"
               data-testid="features-section-title"
             >
               Construa constância<br />com <span className="text-gradient-red">precisão visual</span>
