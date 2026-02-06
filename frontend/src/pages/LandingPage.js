@@ -13,9 +13,35 @@ export default function LandingPage() {
   const [formData, setFormData] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
   // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-  const handleLogin = () => {
-    const redirectUrl = window.location.origin + '/dashboard';
+  const handleGoogleLogin = () => {
+    const redirectUrl = window.location.origin + '/hub';
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+  };
+
+  const handleEmailAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const endpoint = isLogin ? '/auth/login' : '/auth/register';
+      const res = await fetch(`${API}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(formData)
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.detail || 'Erro na autenticação');
+      }
+      
+      toast.success(isLogin ? 'Login realizado!' : 'Conta criada!');
+      navigate('/hub');
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fadeInUp = {
