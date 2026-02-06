@@ -69,7 +69,7 @@ export default function HabitManager() {
       if (!res.ok) throw new Error('Failed to create habit');
 
       toast.success('Hábito criado!');
-      setNewHabit({ name: "", color: "#D4AF37", icon: "circle" });
+      setNewHabit({ name: "", color: "#CD1C33", icon: "circle" });
       setShowAddForm(false);
       loadHabits();
     } catch (error) {
