@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { motion } from "framer-motion";
+import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard, Sparkles } from "lucide-react";
 import CalendarGrid from "../components/CalendarGrid";
 import ProgressStats from "../components/ProgressStats";
 import TutorialModal from "../components/TutorialModal";
@@ -28,12 +29,10 @@ export default function Dashboard() {
     try {
       setLoading(true);
       
-      // Load user
       const userRes = await fetch(`${API}/auth/me`, { credentials: 'include' });
       const userData = await userRes.json();
       setUser(userData);
 
-      // Load habits
       const habitsRes = await fetch(`${API}/habits`, { credentials: 'include' });
       const habitsData = await habitsRes.json();
       
@@ -43,7 +42,6 @@ export default function Dashboard() {
       
       setHabits(habitsData);
 
-      // Load completions
       const completionsRes = await fetch(
         `${API}/completions?year=${currentYear}&month=${currentMonth}`,
         { credentials: 'include' }
@@ -81,12 +79,12 @@ export default function Dashboard() {
       });
 
       const result = await res.json();
-      
-      // Reload completions
       await loadData();
       
       if (result.completed) {
-        toast.success('Hábito marcado!');
+        toast.success('Hábito marcado!', {
+          duration: 2000,
+        });
       }
     } catch (error) {
       console.error('Error toggling completion:', error);
@@ -117,8 +115,12 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
-        <div className="w-16 h-16 border-4 border-navy border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full"
+        ></motion.div>
       </div>
     );
   }
@@ -129,47 +131,50 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen bg-background text-white">
       {/* Header */}
-      <header className="border-b border-[#E5E7EB] bg-white">
+      <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div>
-            <h1 className="font-heading text-2xl text-navy" data-testid="dashboard-title">DayMinder</h1>
+            <h1 className="font-heading text-2xl font-bold text-gradient-gold flex items-center gap-2" data-testid="dashboard-title">
+              <Sparkles className="w-6 h-6 text-primary" />
+              Kolbe
+            </h1>
             {user && (
-              <p className="text-sm text-[#8A8F98] font-body" data-testid="user-name">
+              <p className="text-sm text-slate-400 font-body" data-testid="user-name">
                 {user.name}
               </p>
             )}
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => navigate('/habits')}
               data-testid="manage-habits-button"
-              className="p-2 hover:bg-paper rounded-sm transition-colors"
+              className="p-2.5 hover:bg-white/5 rounded-lg transition-all text-slate-400 hover:text-white"
               title="Gerenciar hábitos"
             >
-              <Settings className="w-5 h-5 text-navy" />
+              <Settings className="w-5 h-5" />
             </button>
             
             {user?.email && user.email.includes('@emergent') && (
               <button
                 onClick={() => navigate('/admin')}
                 data-testid="admin-button"
-                className="p-2 hover:bg-paper rounded-sm transition-colors"
+                className="p-2.5 hover:bg-white/5 rounded-lg transition-all text-slate-400 hover:text-white"
                 title="Admin"
               >
-                <LayoutDashboard className="w-5 h-5 text-navy" />
+                <LayoutDashboard className="w-5 h-5" />
               </button>
             )}
             
             <button
               onClick={handleLogout}
               data-testid="logout-button"
-              className="p-2 hover:bg-paper rounded-sm transition-colors"
+              className="p-2.5 hover:bg-white/5 rounded-lg transition-all text-slate-400 hover:text-white"
               title="Sair"
             >
-              <LogOut className="w-5 h-5 text-navy" />
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
         </div>
@@ -181,30 +186,38 @@ export default function Dashboard() {
           {/* Calendar - Main Area */}
           <div className="lg:col-span-5">
             {/* Month Navigation */}
-            <div className="flex items-center justify-between mb-6">
-              <button
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center justify-between mb-8"
+            >
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={handlePrevMonth}
                 data-testid="prev-month-button"
-                className="p-2 hover:bg-white rounded-sm transition-colors border border-[#E5E7EB]"
+                className="p-3 hover:bg-white/5 rounded-xl transition-all border border-white/10 hover:border-primary/30 text-slate-400 hover:text-white"
               >
-                <ChevronLeft className="w-6 h-6 text-navy" />
-              </button>
+                <ChevronLeft className="w-6 h-6" />
+              </motion.button>
               
               <h2 
-                className="font-heading text-3xl sm:text-4xl text-navy tracking-tight"
+                className="font-heading text-4xl sm:text-5xl font-bold text-white tracking-tight"
                 data-testid="current-month-title"
               >
-                {monthNames[currentMonth - 1]} {currentYear}
+                {monthNames[currentMonth - 1]} <span className="text-primary">{currentYear}</span>
               </h2>
               
-              <button
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 onClick={handleNextMonth}
                 data-testid="next-month-button"
-                className="p-2 hover:bg-white rounded-sm transition-colors border border-[#E5E7EB]"
+                className="p-3 hover:bg-white/5 rounded-xl transition-all border border-white/10 hover:border-primary/30 text-slate-400 hover:text-white"
               >
-                <ChevronRight className="w-6 h-6 text-navy" />
-              </button>
-            </div>
+                <ChevronRight className="w-6 h-6" />
+              </motion.button>
+            </motion.div>
 
             {/* Calendar Grid */}
             <CalendarGrid
