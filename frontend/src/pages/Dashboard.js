@@ -208,7 +208,7 @@ export default function Dashboard() {
               </motion.button>
               
               <h2 
-                className="font-heading text-4xl sm:text-5xl font-bold text-white tracking-tight"
+                className="font-heading text-4xl sm:text-5xl font-medium text-white tracking-tight"
                 data-testid="current-month-title"
               >
                 {monthNames[currentMonth - 1]} <span className="text-primary">{currentYear}</span>
