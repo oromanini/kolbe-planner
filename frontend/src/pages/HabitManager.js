@@ -24,7 +24,7 @@ export default function HabitManager() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newHabit, setNewHabit] = useState({
     name: "",
-    color: "#D4AF37",
+    color: "#CD1C33",
     icon: "circle"
   });
 
