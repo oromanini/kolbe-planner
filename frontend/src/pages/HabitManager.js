@@ -229,7 +229,7 @@ export default function HabitManager() {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     setShowAddForm(false);
-                    setNewHabit({ name: "", color: "#D4AF37", icon: "circle" });
+                    setNewHabit({ name: "", color: "#CD1C33", icon: "circle" });
                   }}
                   data-testid="cancel-add-habit"
                   className="px-8 py-4 border border-white/20 rounded-full font-body hover:bg-white/5 transition-all text-white"
