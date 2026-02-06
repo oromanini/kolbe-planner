@@ -75,7 +75,7 @@ export default function ProgressStats({ year, month, habits, completions }) {
               initial={{ width: 0 }}
               animate={{ width: `${stats.completionRate}%` }}
               transition={{ duration: 1, ease: "easeOut" }}
-              className="h-full bg-gradient-gold relative"
+              className="h-full bg-gradient-red relative"
             >
               <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
             </motion.div>
