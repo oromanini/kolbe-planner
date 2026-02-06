@@ -221,7 +221,7 @@ export default function LandingPage() {
         <div className="max-w-4xl mx-auto text-center">
           <motion.div {...fadeInUp}>
             <h2 
-              className="font-heading text-5xl md:text-6xl font-bold text-white mb-6 tracking-tight"
+              className="font-heading text-5xl md:text-6xl font-medium text-white mb-6 tracking-tight"
               data-testid="cta-title"
             >
               Pronto para ser<br />
