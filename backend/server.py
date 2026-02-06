@@ -70,6 +70,15 @@ class HabitCompletion(BaseModel):
 class SessionRequest(BaseModel):
     session_id: str
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str
+
 class HabitCreate(BaseModel):
     name: str
     color: str
