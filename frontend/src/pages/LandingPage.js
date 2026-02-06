@@ -267,11 +267,11 @@ export default function LandingPage() {
               Zero fricção. Zero complexidade. Apenas você construindo a melhor versão de si mesmo.
             </p>
             <motion.button 
-              onClick={handleLogin}
+              onClick={() => setShowAuth(true)}
               data-testid="cta-login-button"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/30 font-bold tracking-wide px-12 py-6 rounded-full transition-all text-xl inline-flex items-center gap-3"
+              className="bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/30 font-bold tracking-wide px-12 py-6 rounded-full transition-all text-xl inline-flex items-center gap-3"
             >
               Entrar com Google
               <ArrowRight className="w-6 h-6" />
