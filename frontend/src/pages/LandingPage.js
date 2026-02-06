@@ -12,6 +12,16 @@ export default function LandingPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ email: "", password: "", name: "" });
   const [loading, setLoading] = useState(false);
+  const [wordIndex, setWordIndex] = useState(0);
+  
+  const words = ["HÁBITOS DIÁRIOS", "METAS", "CALENDÁRIO", "TEMPO", "DINHEIRO"];
+  
+  useState(() => {
+    const interval = setInterval(() => {
+      setWordIndex((prev) => (prev + 1) % words.length);
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
   // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
   const handleGoogleLogin = () => {
     const redirectUrl = window.location.origin + '/hub';
