@@ -64,7 +64,7 @@ export default function Hub() {
           className="text-center mb-16"
         >
           <h1 className="font-heading text-5xl font-medium text-white mb-4">
-            Escolha seu <span className="text-gradient-red">planner</span>
+            Escolha seu <span className="text-primary">planner</span>
           </h1>
           <p className="text-xl text-slate-400">
             Disciplina em todas as áreas da sua vida
