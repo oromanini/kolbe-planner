@@ -125,10 +125,26 @@ function AppRouter() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route 
+        path="/hub" 
+        element={
+          <ProtectedRoute>
+            <Hub />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
         path="/dashboard" 
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/finance" 
+        element={
+          <ProtectedRoute>
+            <FinancialPlanner />
           </ProtectedRoute>
         } 
       />
