@@ -138,7 +138,7 @@ export default function ProgressStats({ year, month, habits, completions }) {
 
       {/* Habits List */}
       <div className="glass-card p-6">
-        <h3 className="font-heading text-xl font-bold text-white mb-4" data-testid="habits-overview-title">
+        <h3 className="font-heading text-xl font-medium text-white mb-4" data-testid="habits-overview-title">
           Seus Hábitos
         </h3>
         
