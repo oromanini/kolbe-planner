@@ -7,8 +7,8 @@ import { toast } from "sonner";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const PRESET_COLORS = [
+  { name: "Imperial Red", value: "#CD1C33" },
   { name: "Gold", value: "#D4AF37" },
-  { name: "Rose", value: "#E11D48" },
   { name: "Blue", value: "#3B82F6" },
   { name: "Emerald", value: "#10B981" },
   { name: "Purple", value: "#8B5CF6" },
