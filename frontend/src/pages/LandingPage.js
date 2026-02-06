@@ -16,7 +16,7 @@ export default function LandingPage() {
   
   const words = ["HÁBITOS DIÁRIOS", "METAS", "CALENDÁRIO", "TEMPO", "DINHEIRO"];
   
-  useState(() => {
+  useEffect(() => {
     const interval = setInterval(() => {
       setWordIndex((prev) => (prev + 1) % words.length);
     }, 2000);
