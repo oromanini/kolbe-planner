@@ -160,7 +160,7 @@ export default function LandingPage() {
                 <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                   <Zap className="w-7 h-7 text-primary" strokeWidth={2} />
                 </div>
-                <h3 className="font-heading text-2xl font-bold text-white mb-4">
+                <h3 className="font-heading text-2xl font-medium text-white mb-4">
                   Dias Perfeitos
                 </h3>
                 <p className="text-slate-400 leading-relaxed">
