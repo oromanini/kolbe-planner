@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import "@/App.css";
 import LandingPage from "./pages/LandingPage";
+import Hub from "./pages/Hub";
 import Dashboard from "./pages/Dashboard";
 import HabitManager from "./pages/HabitManager";
 import AdminDashboard from "./pages/AdminDashboard";
+import FinancialPlanner from "./pages/FinancialPlanner";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
