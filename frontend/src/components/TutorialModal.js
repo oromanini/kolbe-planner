@@ -118,7 +118,7 @@ export default function TutorialModal({ onComplete, onClose }) {
             </div>
 
             <div className="glass-card p-6 space-y-4">
-              <h3 className="font-heading text-lg font-bold text-white mb-4">
+              <h3 className="font-heading text-lg font-medium text-white mb-4">
                 Como usar
               </h3>
               <ol className="space-y-4">
