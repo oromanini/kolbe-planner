@@ -110,7 +110,7 @@ export default function TutorialModal({ onComplete, onClose }) {
               </motion.div>
               <h2 className="font-heading text-4xl font-bold text-white mb-4">
                 Hábitos<br />
-                <span className="text-gradient-gold">criados!</span>
+                <span className="text-gradient-red">criados!</span>
               </h2>
               <p className="text-slate-400 font-body leading-relaxed text-lg">
                 Criamos 5 hábitos exemplo para você começar.<br />Edite ou crie novos quando quiser.
