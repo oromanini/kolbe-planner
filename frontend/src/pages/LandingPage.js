@@ -67,7 +67,7 @@ export default function LandingPage() {
             </span>
           </div>
           <button 
-            onClick={handleLogin}
+            onClick={() => setShowAuth(true)}
             className="text-sm font-body text-slate-400 hover:text-white transition-colors"
           >
             Entrar
