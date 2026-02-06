@@ -114,11 +114,11 @@ export default function LandingPage() {
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <motion.button 
-                onClick={handleLogin}
+                onClick={() => setShowAuth(true)}
                 data-testid="landing-login-button"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className="group bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 font-bold tracking-wide px-10 py-5 rounded-full transition-all flex items-center gap-3 text-lg"
+                className="group bg-primary text-white hover:bg-primary/90 shadow-lg shadow-primary/20 font-bold tracking-wide px-10 py-5 rounded-full transition-all flex items-center gap-3 text-lg"
               >
                 Começar agora
                 <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
