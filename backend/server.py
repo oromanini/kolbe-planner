@@ -395,6 +395,303 @@ async def initialize_default_habits(
         {"name": "Estudar", "color": "#D4AF37", "icon": "graduation-cap"},
         {"name": "Duolingo", "color": "#58CC02", "icon": "globe"},
     ]
+
+
+# ============ FINANCIAL MODELS ============
+
+class FinancialMethod(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    method_id: str
+    user_id: str
+    name: str
+    created_at: datetime
+
+class FinancialCategory(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    category_id: str
+    user_id: str
+    name: str
+    created_at: datetime
+
+class Expense(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    expense_id: str
+    user_id: str
+    name: str
+    amount: float
+    method_id: str
+    category: str
+    subcategory: Optional[str] = None
+    month: str  # YYYY-MM
+    created_at: datetime
+
+class Income(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    income_id: str
+    user_id: str
+    name: str
+    amount: float
+    month: str  # YYYY-MM
+    created_at: datetime
+
+class Savings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    savings_id: str
+    user_id: str
+    name: str
+    type: str  # caixinha, investimento, reserva
+    amount: float
+    created_at: datetime
+    updated_at: datetime
+
+# Input models
+class ExpenseCreate(BaseModel):
+    name: str
+    amount: float
+    method_id: str
+    category: str
+    subcategory: Optional[str] = None
+    month: str
+
+class IncomeCreate(BaseModel):
+    name: str
+    amount: float
+    month: str
+
+class SavingsCreate(BaseModel):
+    name: str
+    type: str
+    amount: float
+
+class MethodCreate(BaseModel):
+    name: str
+
+class CategoryCreate(BaseModel):
+    name: str
+
+
+# ============ FINANCIAL ENDPOINTS ============
+
+# Methods
+@api_router.get("/finance/methods")
+async def get_methods(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    methods = await db.financial_methods.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
+    return methods
+
+@api_router.post("/finance/methods", status_code=201)
+async def create_method(
+    data: MethodCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    method = {
+        "method_id": f"method_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "name": data.name,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.financial_methods.insert_one(method)
+    return method
+
+# Categories
+@api_router.get("/finance/categories")
+async def get_categories(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
+    return categories
+
+@api_router.post("/finance/categories", status_code=201)
+async def create_category(
+    data: CategoryCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    category = {
+        "category_id": f"cat_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "name": data.name,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.financial_categories.insert_one(category)
+    return category
+
+# Expenses
+@api_router.get("/finance/expenses")
+async def get_expenses(
+    month: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    expenses = await db.expenses.find(
+        {"user_id": user.user_id, "month": month},
+        {"_id": 0}
+    ).to_list(1000)
+    return expenses
+
+@api_router.post("/finance/expenses", status_code=201)
+async def create_expense(
+    data: ExpenseCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    expense = {
+        "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "name": data.name,
+        "amount": data.amount,
+        "method_id": data.method_id,
+        "category": data.category,
+        "subcategory": data.subcategory,
+        "month": data.month,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.expenses.insert_one(expense)
+    return expense
+
+@api_router.delete("/finance/expenses/{expense_id}")
+async def delete_expense(
+    expense_id: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    result = await db.expenses.delete_one({"expense_id": expense_id, "user_id": user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"message": "Deleted"}
+
+# Incomes
+@api_router.get("/finance/incomes")
+async def get_incomes(
+    month: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    incomes = await db.incomes.find(
+        {"user_id": user.user_id, "month": month},
+        {"_id": 0}
+    ).to_list(1000)
+    return incomes
+
+@api_router.post("/finance/incomes", status_code=201)
+async def create_income(
+    data: IncomeCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    income = {
+        "income_id": f"inc_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "name": data.name,
+        "amount": data.amount,
+        "month": data.month,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.incomes.insert_one(income)
+    return income
+
+@api_router.delete("/finance/incomes/{income_id}")
+async def delete_income(
+    income_id: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    result = await db.incomes.delete_one({"income_id": income_id, "user_id": user.user_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Income not found")
+    return {"message": "Deleted"}
+
+# Savings
+@api_router.get("/finance/savings")
+async def get_savings(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    savings = await db.savings.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
+    return savings
+
+@api_router.post("/finance/savings", status_code=201)
+async def create_savings(
+    data: SavingsCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    savings = {
+        "savings_id": f"sav_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "name": data.name,
+        "type": data.type,
+        "amount": data.amount,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.savings.insert_one(savings)
+    return savings
+
+@api_router.put("/finance/savings/{savings_id}")
+async def update_savings(
+    savings_id: str,
+    amount: float,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    result = await db.savings.update_one(
+        {"savings_id": savings_id, "user_id": user.user_id},
+        {"$set": {"amount": amount, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Savings not found")
+    updated = await db.savings.find_one({"savings_id": savings_id}, {"_id": 0})
+    return updated
+
+# Summary
+@api_router.get("/finance/summary")
+async def get_summary(
+    month: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    
+    # Get incomes
+    incomes = await db.incomes.find({"user_id": user.user_id, "month": month}, {"_id": 0}).to_list(1000)
+    total_income = sum(i["amount"] for i in incomes)
+    
+    # Get expenses
+    expenses = await db.expenses.find({"user_id": user.user_id, "month": month}, {"_id": 0}).to_list(1000)
+    total_expenses = sum(e["amount"] for e in expenses)
+    
+    # Category breakdown
+    category_breakdown = {}
+    for expense in expenses:
+        cat = expense["category"]
+        category_breakdown[cat] = category_breakdown.get(cat, 0) + expense["amount"]
+    
+    return {
+        "month": month,
+        "total_income": total_income,
+        "total_expenses": total_expenses,
+        "balance": total_income - total_expenses,
+        "category_breakdown": category_breakdown
+    }
+
     
     habits = []
     for i, h in enumerate(default_habits):
