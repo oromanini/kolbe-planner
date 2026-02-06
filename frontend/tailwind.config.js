@@ -36,7 +36,7 @@ module.exports = {
   		backgroundImage: {
   			'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
   			'gradient-hero': 'linear-gradient(135deg, #0B1120 0%, #151E32 100%)',
-  			'gradient-gold': 'linear-gradient(45deg, #D4AF37 0%, #F3E5AB 50%, #8F7524 100%)'
+  			'gradient-red': 'linear-gradient(45deg, #CD1C33 0%, #E63946 50%, #9B1422 100%)'
   		},
   		boxShadow: {
   			'glow': '0 0 20px rgba(212, 175, 55, 0.15)',
