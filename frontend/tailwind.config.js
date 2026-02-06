@@ -10,14 +10,37 @@ module.exports = {
   			sm: 'calc(var(--radius) - 4px)'
   		},
   		colors: {
-  			navy: '#0F1B2D',
-  			'imperial-red': '#C0392B',
-  			'victory-gold': '#F2E6C9',
-  			paper: '#FAF9F7'
+  			primary: {
+  				DEFAULT: '#D4AF37',
+  				light: '#F3E5AB',
+  				dark: '#8F7524',
+  				foreground: '#000000'
+  			},
+  			secondary: {
+  				DEFAULT: '#E11D48',
+  				light: '#FB7185',
+  				dark: '#881337',
+  				foreground: '#FFFFFF'
+  			},
+  			background: {
+  				DEFAULT: '#0B1120',
+  				paper: '#151E32',
+  				subtle: '#1E293B'
+  			}
   		},
   		fontFamily: {
-  			heading: ['Playfair Display', 'serif'],
-  			body: ['Manrope', 'sans-serif']
+  			heading: ['Syne', 'sans-serif'],
+  			body: ['Manrope', 'sans-serif'],
+  			accent: ['Playfair Display', 'serif']
+  		},
+  		backgroundImage: {
+  			'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+  			'gradient-hero': 'linear-gradient(135deg, #0B1120 0%, #151E32 100%)',
+  			'gradient-gold': 'linear-gradient(45deg, #D4AF37 0%, #F3E5AB 50%, #8F7524 100%)'
+  		},
+  		boxShadow: {
+  			'glow': '0 0 20px rgba(212, 175, 55, 0.15)',
+  			'glow-strong': '0 0 30px rgba(212, 175, 55, 0.3)'
   		}
   	}
   },
