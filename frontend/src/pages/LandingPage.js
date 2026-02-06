@@ -60,14 +60,8 @@ export default function LandingPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, ease: "easeOut" }}
           >
-            <div className="mb-6">
-              <span className="inline-block px-4 py-2 bg-white/5 backdrop-blur-sm border border-white/10 rounded-full text-sm tracking-widest uppercase text-slate-400">
-                Kolbe Planner
-              </span>
-            </div>
-            
             <h1 
-              className="font-heading text-6xl md:text-8xl font-bold tracking-tight leading-none mb-8"
+              className="font-heading text-6xl md:text-8xl font-medium tracking-tight leading-none mb-8"
               data-testid="landing-hero-title"
             >
               Domine seus<br />
