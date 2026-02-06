@@ -44,8 +44,8 @@ function AuthCallback() {
 
         const user = await response.json();
         
-        // Navigate to dashboard with user data
-        navigate('/dashboard', { 
+        // Navigate to hub with user data
+        navigate('/hub', { 
           replace: true, 
           state: { user } 
         });
