@@ -49,7 +49,7 @@ export default function LandingPage() {
               data-testid="landing-hero-title"
             >
               Domine seus<br />
-              <span className="text-gradient-gold">hábitos diários</span>
+              <span className="text-gradient-red">hábitos diários</span>
             </h1>
             
             <p 
