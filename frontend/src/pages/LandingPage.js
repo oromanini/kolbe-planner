@@ -1,4 +1,5 @@
-import { ArrowRight, Check } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowRight, Check, TrendingUp, Target, Zap, Calendar } from "lucide-react";
 
 export default function LandingPage() {
   // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
@@ -7,118 +8,231 @@ export default function LandingPage() {
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
+  const fadeInUp = {
+    initial: { opacity: 0, y: 30 },
+    whileInView: { opacity: 1, y: 0 },
+    viewport: { once: true },
+    transition: { duration: 0.6, ease: "easeOut" }
+  };
+
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen bg-background text-white overflow-hidden">
       {/* Hero Section */}
       <section className="relative min-h-screen flex items-center justify-center px-4">
-        <div className="absolute inset-0 opacity-5 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMwRjFCMkQiIGZpbGwtb3BhY2l0eT0iMC40Ij48cGF0aCBkPSJNMzYgMzBoMnYyaC0yVjMwem0wLTEwaC4ydjJIMzZ2LTJ6bTAgMTBoLS4ydjJIMzZ2LTJ6Ii8+PC9nPjwvZz48L3N2Zz4=')]"></div>
+        {/* Background with overlay */}
+        <div className="absolute inset-0 bg-gradient-hero"></div>
+        <div 
+          className="absolute inset-0 opacity-20"
+          style={{
+            backgroundImage: "url('https://images.unsplash.com/photo-1761437855740-c894da924d79?crop=entropy&cs=srgb&fm=jpg&q=85')",
+            backgroundSize: "cover",
+            backgroundPosition: "center"
+          }}
+        ></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/50 to-background"></div>
         
-        <div className="max-w-4xl mx-auto text-center relative z-10">
-          <h1 
-            className="font-heading text-5xl sm:text-6xl lg:text-7xl tracking-tight leading-none text-navy mb-6"
-            data-testid="landing-hero-title"
+        {/* Hero Content */}
+        <div className="relative z-10 max-w-5xl mx-auto text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
           >
-            Veja sua disciplina<br />tomar forma
-          </h1>
-          
-          <p 
-            className="text-lg sm:text-xl text-[#8A8F98] max-w-2xl mx-auto mb-12 font-body leading-relaxed"
-            data-testid="landing-hero-subtitle"
-          >
-            Um planner minimalista para pessoas que trabalham, estudam e praticam<br className="hidden sm:block" />
-            hábitos recorrentes. Acompanhe seu progresso visualmente.
-          </p>
-          
-          <button 
-            onClick={handleLogin}
-            data-testid="landing-login-button"
-            className="group bg-navy text-white px-8 py-4 rounded-sm font-body font-medium hover:bg-navy/90 transition-all inline-flex items-center gap-2 shadow-sm"
-          >
-            Começar agora
-            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-          </button>
+            <div className="mb-6">
+              <span className="inline-block px-4 py-2 bg-white/5 backdrop-blur-sm border border-white/10 rounded-full text-sm tracking-widest uppercase text-slate-400">
+                Kolbe Planner
+              </span>
+            </div>
+            
+            <h1 
+              className="font-heading text-6xl md:text-8xl font-bold tracking-tight leading-none mb-8"
+              data-testid="landing-hero-title"
+            >
+              Domine seus<br />
+              <span className="text-gradient-gold">hábitos diários</span>
+            </h1>
+            
+            <p 
+              className="text-lg md:text-2xl text-slate-300 max-w-3xl mx-auto mb-12 leading-relaxed font-body"
+              data-testid="landing-hero-subtitle"
+            >
+              Para pessoas disciplinadas que constroem progresso visível.<br className="hidden md:block" />
+              Veja cada dia se transformar em vitória.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+              <motion.button 
+                onClick={handleLogin}
+                data-testid="landing-login-button"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="group bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 font-bold tracking-wide px-10 py-5 rounded-full transition-all flex items-center gap-3 text-lg"
+              >
+                Começar agora
+                <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />
+              </motion.button>
+              
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                className="bg-transparent border border-white/20 text-white hover:bg-white/5 hover:border-white/40 px-10 py-5 rounded-full transition-all text-lg font-medium"
+              >
+                Ver demonstração
+              </motion.button>
+            </div>
+          </motion.div>
         </div>
+
+        {/* Scroll indicator */}
+        <motion.div 
+          className="absolute bottom-10 left-1/2 -translate-x-1/2"
+          animate={{ y: [0, 10, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+        >
+          <div className="w-6 h-10 border-2 border-white/20 rounded-full flex justify-center p-2">
+            <div className="w-1 h-3 bg-primary rounded-full"></div>
+          </div>
+        </motion.div>
       </section>
 
       {/* Features Section */}
-      <section className="py-24 px-4 border-t border-[#E5E7EB]">
-        <div className="max-w-5xl mx-auto">
-          <h2 
-            className="font-heading text-3xl sm:text-4xl text-navy text-center mb-16 tracking-tight"
-            data-testid="features-section-title"
-          >
-            Constância visível
-          </h2>
+      <section className="relative py-32 px-4 border-t border-white/5">
+        <div className="max-w-7xl mx-auto">
+          <motion.div {...fadeInUp} className="text-center mb-20">
+            <h2 
+              className="font-heading text-5xl md:text-6xl font-bold text-white mb-6 tracking-tight"
+              data-testid="features-section-title"
+            >
+              Construa constância<br />com <span className="text-gradient-gold">precisão visual</span>
+            </h2>
+            <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+              Cada dia é uma oportunidade. Cada mês, uma prova do seu progresso.
+            </p>
+          </motion.div>
           
-          <div className="grid md:grid-cols-3 gap-12">
-            <div className="text-center" data-testid="feature-visual">
-              <div className="w-16 h-16 bg-white border border-[#E5E7EB] rounded-sm mx-auto mb-6 flex items-center justify-center">
-                <div className="grid grid-cols-3 gap-1">
-                  {[...Array(9)].map((_, i) => (
-                    <div key={i} className={`w-2 h-2 rounded-full ${i < 6 ? 'bg-navy' : 'bg-navy/20'}`}></div>
-                  ))}
+          <div className="grid md:grid-cols-3 gap-8">
+            {/* Feature 1 */}
+            <motion.div 
+              {...fadeInUp}
+              data-testid="feature-visual"
+              className="glass-card p-8 hover:border-primary/30 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-all"></div>
+              
+              <div className="relative z-10">
+                <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                  <Calendar className="w-7 h-7 text-primary" strokeWidth={2} />
                 </div>
+                <h3 className="font-heading text-2xl font-bold text-white mb-4">
+                  Calendário Visual
+                </h3>
+                <p className="text-slate-400 leading-relaxed">
+                  Grade mensal intuitiva. Veja seus hábitos preenchendo cada dia com clareza absoluta.
+                </p>
               </div>
-              <h3 className="font-heading text-xl text-navy mb-3">Visualização clara</h3>
-              <p className="text-[#8A8F98] font-body leading-relaxed">
-                Veja o mês inteiro sendo preenchido. Cada dia é um quadrado com seus hábitos.
-              </p>
-            </div>
+            </motion.div>
 
-            <div className="text-center" data-testid="feature-victory">
-              <div className="w-16 h-16 bg-white border border-[#E5E7EB] rounded-sm mx-auto mb-6 flex items-center justify-center">
-                <Check className="w-8 h-8 text-[#F2E6C9]" strokeWidth={3} />
-              </div>
-              <h3 className="font-heading text-xl text-navy mb-3">Satisfação ao completar</h3>
-              <p className="text-[#8A8F98] font-body leading-relaxed">
-                Dias 100% completos ganham destaque dourado. Celebre suas vitórias.
-              </p>
-            </div>
-
-            <div className="text-center" data-testid="feature-history">
-              <div className="w-16 h-16 bg-white border border-[#E5E7EB] rounded-sm mx-auto mb-6 flex items-center justify-center">
-                <div className="flex gap-1">
-                  <div className="w-2 h-8 bg-navy/30 rounded-sm"></div>
-                  <div className="w-2 h-10 bg-navy/50 rounded-sm"></div>
-                  <div className="w-2 h-12 bg-navy rounded-sm"></div>
+            {/* Feature 2 */}
+            <motion.div 
+              {...fadeInUp}
+              transition={{ delay: 0.1 }}
+              data-testid="feature-victory"
+              className="glass-card p-8 hover:border-primary/30 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-all"></div>
+              
+              <div className="relative z-10">
+                <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                  <Zap className="w-7 h-7 text-primary" strokeWidth={2} />
                 </div>
+                <h3 className="font-heading text-2xl font-bold text-white mb-4">
+                  Dias Perfeitos
+                </h3>
+                <p className="text-slate-400 leading-relaxed">
+                  Complete 100% dos hábitos e veja seu dia brilhar em dourado. Satisfação instantânea.
+                </p>
               </div>
-              <h3 className="font-heading text-xl text-navy mb-3">Histórico ilimitado</h3>
-              <p className="text-[#8A8F98] font-body leading-relaxed">
-                Navegue entre meses. Veja sua linha do tempo de disciplina.
-              </p>
-            </div>
+            </motion.div>
+
+            {/* Feature 3 */}
+            <motion.div 
+              {...fadeInUp}
+              transition={{ delay: 0.2 }}
+              data-testid="feature-history"
+              className="glass-card p-8 hover:border-primary/30 transition-all group relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl group-hover:bg-primary/20 transition-all"></div>
+              
+              <div className="relative z-10">
+                <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                  <TrendingUp className="w-7 h-7 text-primary" strokeWidth={2} />
+                </div>
+                <h3 className="font-heading text-2xl font-bold text-white mb-4">
+                  Progresso Ilimitado
+                </h3>
+                <p className="text-slate-400 leading-relaxed">
+                  Navegue por todos os meses. Sua linha do tempo de disciplina, sempre acessível.
+                </p>
+              </div>
+            </motion.div>
           </div>
         </div>
       </section>
 
+      {/* Social Proof / Stats */}
+      <section className="relative py-24 px-4 border-t border-white/5">
+        <div className="max-w-7xl mx-auto">
+          <motion.div {...fadeInUp} className="glass-card-heavy p-12 text-center">
+            <div className="grid md:grid-cols-3 gap-12 divide-x-0 md:divide-x divide-white/10">
+              <div>
+                <div className="font-heading text-5xl font-bold text-primary mb-2">10</div>
+                <div className="text-slate-400 uppercase tracking-wider text-sm">Hábitos Simultâneos</div>
+              </div>
+              <div>
+                <div className="font-heading text-5xl font-bold text-primary mb-2">∞</div>
+                <div className="text-slate-400 uppercase tracking-wider text-sm">Histórico Ilimitado</div>
+              </div>
+              <div>
+                <div className="font-heading text-5xl font-bold text-primary mb-2">100%</div>
+                <div className="text-slate-400 uppercase tracking-wider text-sm">Visualização Completa</div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
       {/* CTA Section */}
-      <section className="py-24 px-4 border-t border-[#E5E7EB]">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 
-            className="font-heading text-4xl sm:text-5xl text-navy mb-6 tracking-tight"
-            data-testid="cta-title"
-          >
-            Comece hoje
-          </h2>
-          <p className="text-lg text-[#8A8F98] mb-8 font-body">
-            Zero fricção. Zero complexidade. Apenas você e seus hábitos.
-          </p>
-          <button 
-            onClick={handleLogin}
-            data-testid="cta-login-button"
-            className="bg-navy text-white px-8 py-4 rounded-sm font-body font-medium hover:bg-navy/90 transition-all shadow-sm"
-          >
-            Entrar com Google
-          </button>
+      <section className="relative py-32 px-4 border-t border-white/5">
+        <div className="max-w-4xl mx-auto text-center">
+          <motion.div {...fadeInUp}>
+            <h2 
+              className="font-heading text-5xl md:text-6xl font-bold text-white mb-6 tracking-tight"
+              data-testid="cta-title"
+            >
+              Pronto para ser<br />
+              <span className="text-gradient-gold">imparável?</span>
+            </h2>
+            <p className="text-xl text-slate-400 mb-12 max-w-2xl mx-auto">
+              Zero fricção. Zero complexidade. Apenas você construindo a melhor versão de si mesmo.
+            </p>
+            <motion.button 
+              onClick={handleLogin}
+              data-testid="cta-login-button"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/30 font-bold tracking-wide px-12 py-6 rounded-full transition-all text-xl inline-flex items-center gap-3"
+            >
+              Entrar com Google
+              <ArrowRight className="w-6 h-6" />
+            </motion.button>
+          </motion.div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-8 px-4 border-t border-[#E5E7EB]">
-        <div className="max-w-5xl mx-auto text-center">
-          <p className="text-sm text-[#8A8F98] font-body">
-            DayMinder &copy; 2025 — Planner minimalista para formação de hábitos
+      <footer className="py-12 px-4 border-t border-white/5">
+        <div className="max-w-7xl mx-auto text-center">
+          <p className="text-slate-500 text-sm font-body">
+            Kolbe Planner &copy; 2025 — A plataforma para pessoas que levam disciplina a sério
           </p>
         </div>
       </footer>
