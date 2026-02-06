@@ -280,7 +280,7 @@ async def get_habits(
     return habits
 
 
-@api_router.post("/habits", response_model=Habit)
+@api_router.post("/habits", response_model=Habit, status_code=201)
 async def create_habit(
     habit_data: HabitCreate,
     session_token: Optional[str] = Cookie(None),
