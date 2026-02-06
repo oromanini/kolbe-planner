@@ -8,10 +8,10 @@
     :root {
         --background: 11 17 32;
         --foreground: 248 250 252;
-        --primary: 212 175 55;
-        --primary-foreground: 0 0 0;
-        --secondary: 225 29 72;
-        --secondary-foreground: 255 255 255;
+        --primary: 205 28 51;
+        --primary-foreground: 255 255 255;
+        --secondary: 212 175 55;
+        --secondary-foreground: 0 0 0;
         --radius: 1rem;
     }
 }
