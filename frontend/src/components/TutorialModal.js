@@ -53,7 +53,7 @@ export default function TutorialModal({ onComplete, onClose }) {
             </div>
 
             <div className="glass-card p-6 space-y-4">
-              <h3 className="font-heading text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <h3 className="font-heading text-lg font-medium text-white mb-4 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-primary" />
                 O que você vai conseguir
               </h3>
