@@ -1,0 +1,170 @@
+{
+  "typography": {
+    "font_family": {
+      "headings": "Playfair Display, serif",
+      "body": "Manrope, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "weights": {
+      "headings": "600",
+      "body_regular": "400",
+      "body_medium": "500",
+      "body_bold": "700"
+    },
+    "sizes": {
+      "h1": "text-5xl md:text-6xl tracking-tight leading-none",
+      "h2": "text-4xl md:text-5xl tracking-tight",
+      "h3": "text-2xl md:text-3xl tracking-normal",
+      "body_lg": "text-lg leading-relaxed",
+      "body_base": "text-base leading-relaxed",
+      "caption": "text-sm tracking-wide uppercase text-muted-foreground"
+    },
+    "usage_rules": [
+      "Use Playfair Display for all major headings (H1-H3) to evoke a 'classic planner' feel.",
+      "Use Manrope for all UI elements, calendar dates, and data inputs for maximum legibility.",
+      "Never use Inter.",
+      "Headings must have tight tracking (-0.02em).",
+      "Captions/Labels must be uppercase with wide tracking (0.05em)."
+    ]
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "DEFAULT": "#0F1B2D",
+        "foreground": "#FFFFFF",
+        "description": "Deep Navy - Used for primary actions, active states, and strong borders."
+      },
+      "secondary": {
+        "DEFAULT": "#C0392B",
+        "foreground": "#FFFFFF",
+        "description": "Imperial Red (Softened) - Used for 'Missed' states, alerts, or secondary highlights."
+      },
+      "accent": {
+        "DEFAULT": "#F2E6C9",
+        "foreground": "#0F1B2D",
+        "description": "Light Gold - RESERVED for 'Victory' states (100% completion) and premium highlights."
+      },
+      "background": {
+        "DEFAULT": "#FAF9F7",
+        "paper": "#FFFFFF",
+        "description": "Warm Off-white - Main app background. Must feel like high-quality paper."
+      },
+      "text": {
+        "primary": "#1C1C1C",
+        "secondary": "#8A8F98",
+        "muted": "#D1D5DB"
+      },
+      "border": {
+        "DEFAULT": "#E5E7EB",
+        "strong": "#0F1B2D"
+      }
+    },
+    "tailwind_config_extension": {
+      "colors": {
+        "navy": "#0F1B2D",
+        "imperial-red": "#C0392B",
+        "victory-gold": "#F2E6C9",
+        "paper": "#FAF9F7"
+      }
+    },
+    "rules": [
+      "NO DARK MODE for the main interface. The app must feel like a physical paper planner.",
+      "Use the 'Victory Gold' (#F2E6C9) ONLY when a user completes all habits for the day or achieves a streak.",
+      "Backgrounds must be #FAF9F7 (Warm Off-white), not pure #FFFFFF.",
+      "Cards and Calendar Cells can be #FFFFFF to create subtle depth against the #FAF9F7 background."
+    ]
+  },
+  "visual_enhancers": {
+    "textures": [
+      "Apply a subtle 'noise' texture (opacity 2-3%) over the entire app to simulate paper grain.",
+      "Use 'multiply' blend mode for text to make it look 'printed' on the screen."
+    ],
+    "shadows": {
+      "card": "0 1px 2px rgba(15, 27, 45, 0.05)",
+      "hover": "0 4px 12px rgba(15, 27, 45, 0.08)",
+      "victory": "0 0 20px rgba(242, 230, 201, 0.6)"
+    },
+    "borders": {
+      "default": "1px solid #E5E7EB",
+      "active": "1px solid #0F1B2D",
+      "radius": "rounded-none (for grid cells) or rounded-sm (for buttons) - Keep it sharp and disciplined."
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-navy text-white hover:bg-navy/90 rounded-sm px-6 py-2 font-medium transition-all",
+      "secondary": "border border-navy text-navy hover:bg-navy/5 rounded-sm px-6 py-2 font-medium transition-all",
+      "ghost": "text-navy/60 hover:text-navy hover:bg-navy/5 rounded-sm px-4 py-2 transition-all"
+    },
+    "calendar_grid": {
+      "container": "grid grid-cols-7 gap-px bg-border border border-border",
+      "cell": "bg-white aspect-square p-2 relative hover:bg-gray-50 transition-colors cursor-pointer group",
+      "cell_active": "ring-1 ring-inset ring-navy z-10",
+      "cell_victory": "bg-victory-gold/30"
+    },
+    "habit_tracker": {
+      "indicator": "h-1.5 w-1.5 rounded-full bg-navy/20",
+      "indicator_completed": "bg-navy"
+    },
+    "cards": {
+      "base": "bg-white border border-border p-6 shadow-sm"
+    }
+  },
+  "layout": {
+    "grid_system": "Use a strict 7-column grid for the calendar. For the dashboard, use a 'Bento' style layout: Calendar (Dominant, col-span-5) + Habit List/Stats (Sidebar, col-span-2).",
+    "spacing": "Use generous padding (p-8, p-12) to create a sense of calm and focus. Avoid clutter.",
+    "alignment": "Center the calendar for focus. Left-align text for readability."
+  },
+  "motion": {
+    "library": "framer-motion",
+    "animations": {
+      "check_mark": "Scale up from 0 to 1 with a spring effect.",
+      "page_transition": "Opacity fade (0.3s ease).",
+      "victory_flash": "Flash the cell background gold upon 100% completion."
+    },
+    "reduced_motion": "Disable scale/slide effects, use opacity only."
+  },
+  "accessibility": {
+    "contrast": "Ensure text (#1C1C1C) on background (#FAF9F7) meets APCA standards.",
+    "focus_states": "Visible focus ring (#0F1B2D) with 2px offset.",
+    "aria_labels": "All calendar cells must have aria-labels (e.g., 'January 1st, 3 of 5 habits completed')."
+  },
+  "media": {
+    "icons": "Lucide React (Stroke width: 1.5px for elegance).",
+    "images": "Use high-quality, minimalist photography. No generic 3D renders."
+  },
+  "image_urls": {
+    "landing_hero": {
+      "url": "https://images.unsplash.com/photo-1764755932155-dabbee87df7e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Minimalist desk setup with laptop and sunlight",
+      "category": "hero"
+    },
+    "planning_moment": {
+      "url": "https://images.unsplash.com/photo-1759296844873-e0c694c24284?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Notebook with pen and smartphone, focus on planning",
+      "category": "feature"
+    },
+    "calm_workspace": {
+      "url": "https://images.unsplash.com/photo-1512236092577-9bd0e8cf5941?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHw0fHxtaW5pbWFsaXN0JTIwZGVzayUyMHNldHVwJTIwc3VubGlnaHR8ZW58MHx8fHwxNzcwMzY4NjExfDA&ixlib=rb-4.1.0&q=85",
+      "description": "Clean iMac workspace, beige tones",
+      "category": "background"
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. SETUP: Install 'lucide-react', 'framer-motion', 'clsx', 'tailwind-merge'.",
+    "2. THEME: Configure tailwind.config.js with the custom colors (navy, imperial-red, victory-gold, paper).",
+    "3. FONTS: Import Playfair Display and Manrope from Google Fonts in index.css.",
+    "4. LAYOUT: Build the 'CalendarGrid' component first. It is the heart of the app. It must be a CSS Grid with 7 columns.",
+    "5. INTERACTION: The 'DayCell' must be clickable. Clicking opens a Modal (Dialog) to check off habits.",
+    "6. VICTORY: Implement the logic: If (completed_habits == total_habits) -> Apply 'bg-victory-gold' to the cell.",
+    "7. LANDING: Use the provided image URLs for the hero section. Keep the landing page text minimal and stoic.",
+    "8. ADMIN: The admin area should be functional but keep the same aesthetic. No 'bootstrap' admin templates."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "DO NOT use gradients. Use solid colors and whitespace.",
+    "DO NOT use 'Inter' font.",
+    "Ensure all interactive elements have 'data-testid'.",
+    "Use 'sonner' for toast notifications (e.g., 'Habit completed').",
+    "Maintain the 'Paper Planner' aesthetic: Clean, sharp, disciplined."
+  ]
+}
