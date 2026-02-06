@@ -1,7 +1,17 @@
 import { motion } from "framer-motion";
-import { ArrowRight, Check, TrendingUp, Target, Zap, Calendar } from "lucide-react";
+import { ArrowRight, Check, TrendingUp, Target, Zap, Calendar, Mail, Lock, User } from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function LandingPage() {
+  const navigate = useNavigate();
+  const [showAuth, setShowAuth] = useState(false);
+  const [isLogin, setIsLogin] = useState(true);
+  const [formData, setFormData] = useState({ email: "", password: "", name: "" });
+  const [loading, setLoading] = useState(false);
   // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
   const handleLogin = () => {
     const redirectUrl = window.location.origin + '/dashboard';
