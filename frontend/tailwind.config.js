@@ -39,8 +39,8 @@ module.exports = {
   			'gradient-red': 'linear-gradient(45deg, #CD1C33 0%, #E63946 50%, #9B1422 100%)'
   		},
   		boxShadow: {
-  			'glow': '0 0 20px rgba(212, 175, 55, 0.15)',
-  			'glow-strong': '0 0 30px rgba(212, 175, 55, 0.3)'
+  			'glow': '0 0 20px rgba(205, 28, 51, 0.15)',
+  			'glow-strong': '0 0 30px rgba(205, 28, 51, 0.3)'
   		}
   	}
   },
