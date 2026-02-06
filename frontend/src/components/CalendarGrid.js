@@ -101,29 +101,39 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
               >
                 {/* Day number */}
                 <div className={`
-                  text-sm font-body font-medium mb-1
-                  ${isComplete ? 'text-primary font-bold' : 'text-slate-300'}
+                  text-xs font-body font-medium mb-1.5 text-right
+                  ${isComplete ? 'text-primary font-bold' : 'text-slate-400'}
                 `}>
                   {day}
                 </div>
 
-                {/* Habit indicators */}
-                <div className="flex flex-wrap gap-1 justify-center">
-                  {habits.slice(0, 6).map((habit) => {
+                {/* Habit list with names */}
+                <div className="space-y-0.5 text-left overflow-hidden">
+                  {habits.slice(0, 4).map((habit) => {
                     const completed = isHabitCompletedOnDay(habit.habit_id, day);
                     return (
-                      <motion.div
+                      <div
                         key={habit.habit_id}
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        className="w-1.5 h-1.5 rounded-full transition-all"
-                        style={{
-                          backgroundColor: completed ? habit.color : 'rgba(255,255,255,0.1)',
-                          boxShadow: completed ? `0 0 8px ${habit.color}` : 'none'
-                        }}
-                      />
+                        className="flex items-center gap-1 text-[10px] leading-tight"
+                      >
+                        <div
+                          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                          style={{
+                            backgroundColor: completed ? habit.color : 'rgba(255,255,255,0.15)',
+                            boxShadow: completed ? `0 0 6px ${habit.color}` : 'none'
+                          }}
+                        />
+                        <span className={`truncate ${completed ? 'text-slate-300' : 'text-slate-600'}`}>
+                          {habit.name}
+                        </span>
+                      </div>
                     );
                   })}
+                  {habits.length > 4 && (
+                    <div className="text-[9px] text-slate-600 text-center">
+                      +{habits.length - 4}
+                    </div>
+                  )}
                 </div>
 
                 {/* Victory glow */}
