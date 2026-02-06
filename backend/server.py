@@ -389,10 +389,10 @@ async def initialize_default_habits(
         raise HTTPException(status_code=400, detail="User already has habits")
     
     default_habits = [
-        {"name": "Exercício", "color": "#C0392B", "icon": "activity"},
+        {"name": "Exercício", "color": "#CD1C33", "icon": "activity"},
         {"name": "Leitura", "color": "#0F1B2D", "icon": "book-open"},
         {"name": "Meditação", "color": "#8A8F98", "icon": "brain"},
-        {"name": "Estudar", "color": "#F2E6C9", "icon": "graduation-cap"},
+        {"name": "Estudar", "color": "#D4AF37", "icon": "graduation-cap"},
         {"name": "Duolingo", "color": "#58CC02", "icon": "globe"},
     ]
     
