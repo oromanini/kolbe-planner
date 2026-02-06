@@ -108,7 +108,7 @@ export default function TutorialModal({ onComplete, onClose }) {
               >
                 <Check className="w-10 h-10 text-background" strokeWidth={3} />
               </motion.div>
-              <h2 className="font-heading text-4xl font-bold text-white mb-4">
+              <h2 className="font-heading text-4xl font-medium text-white mb-4">
                 Hábitos<br />
                 <span className="text-gradient-red">criados!</span>
               </h2>
