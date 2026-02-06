@@ -31,8 +31,8 @@
 }
 
 @layer utilities {
-    .text-gradient-gold {
-        @apply bg-gradient-to-r from-[#D4AF37] via-[#F3E5AB] to-[#8F7524] bg-clip-text text-transparent;
+    .text-gradient-red {
+        @apply bg-gradient-to-r from-[#CD1C33] via-[#E63946] to-[#9B1422] bg-clip-text text-transparent;
     }
     
     .glass-card {
