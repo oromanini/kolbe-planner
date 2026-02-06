@@ -145,7 +145,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
         <DialogContent className="sm:max-w-md glass-card-heavy border-white/10">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-heading text-3xl font-bold text-white" data-testid="day-dialog-title">
+              <h3 className="font-heading text-3xl font-medium text-white" data-testid="day-dialog-title">
                 Dia <span className="text-primary">{selectedDay}</span>
               </h3>
               <button
