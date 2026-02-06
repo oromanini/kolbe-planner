@@ -94,7 +94,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className={`
-                  bg-background-paper aspect-square p-2 relative hover:bg-background-subtle transition-all cursor-pointer group
+                  bg-background-paper aspect-square p-2 relative hover:bg-background-subtle transition-all cursor-pointer group min-h-[80px]
                   ${isComplete ? 'bg-gradient-to-br from-primary/20 to-primary/5 shadow-glow' : ''}
                   ${isPartial ? 'bg-white/5' : ''}
                 `}
