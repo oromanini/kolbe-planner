@@ -48,7 +48,7 @@ export default function ProgressStats({ year, month, habits, completions }) {
     >
       {/* Progress Overview */}
       <div className="glass-card p-6">
-        <h3 className="font-heading text-xl font-bold text-white mb-6 flex items-center gap-2" data-testid="progress-title">
+        <h3 className="font-heading text-xl font-medium text-white mb-6 flex items-center gap-2" data-testid="progress-title">
           <TrendingUp className="w-5 h-5 text-primary" />
           Progresso
         </h3>
