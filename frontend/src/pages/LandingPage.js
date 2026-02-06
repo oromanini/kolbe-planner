@@ -102,7 +102,7 @@ export default function LandingPage() {
               className="font-heading text-5xl md:text-6xl font-bold text-white mb-6 tracking-tight"
               data-testid="features-section-title"
             >
-              Construa constância<br />com <span className="text-gradient-gold">precisão visual</span>
+              Construa constância<br />com <span className="text-gradient-red">precisão visual</span>
             </h2>
             <p className="text-xl text-slate-400 max-w-2xl mx-auto">
               Cada dia é uma oportunidade. Cada mês, uma prova do seu progresso.
