@@ -111,16 +111,18 @@ export default function LandingPage() {
               data-testid="landing-hero-title"
             >
               Domine seus<br />
-              <motion.span 
-                key={wordIndex}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.5 }}
-                className="text-primary inline-block"
-              >
-                {words[wordIndex]}
-              </motion.span>
+              <AnimatePresence mode="wait">
+                <motion.span 
+                  key={wordIndex}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.5 }}
+                  className="text-primary inline-block"
+                >
+                  {words[wordIndex]}
+                </motion.span>
+              </AnimatePresence>
             </h1>
             
             <p 
