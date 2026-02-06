@@ -161,7 +161,7 @@ export default function HabitManager() {
             onSubmit={handleAddHabit} 
             className="mb-8 glass-card p-8"
           >
-            <h3 className="font-heading text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <h3 className="font-heading text-2xl font-medium text-white mb-6 flex items-center gap-2">
               <Plus className="w-6 h-6 text-primary" />
               Novo Hábito
             </h3>
