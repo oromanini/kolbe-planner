@@ -136,7 +136,7 @@ export default function AdminDashboard() {
           className="glass-card overflow-hidden"
         >
           <div className="px-8 py-6 border-b border-white/5">
-            <h2 className="font-heading text-2xl font-bold text-white" data-testid="users-table-title">
+            <h2 className="font-heading text-2xl font-medium text-white" data-testid="users-table-title">
               Usuários Cadastrados
             </h2>
           </div>
