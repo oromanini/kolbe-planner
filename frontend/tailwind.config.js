@@ -29,7 +29,7 @@ module.exports = {
   			}
   		},
   		fontFamily: {
-  			heading: ['Syne', 'sans-serif'],
+  			heading: ['League Spartan', 'sans-serif'],
   			body: ['Manrope', 'sans-serif'],
   			accent: ['Playfair Display', 'serif']
   		},
