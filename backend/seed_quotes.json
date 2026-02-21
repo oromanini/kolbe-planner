@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "mode": "neutral",
+      "text": "Disciplina diária vence motivação ocasional.",
+      "author": "Kolbe Planner",
+      "tags": ["disciplina", "constancia"],
+      "active": true
+    },
+    {
+      "mode": "neutral",
+      "text": "Organize hoje para colher tranquilidade amanhã.",
+      "author": "Kolbe Planner",
+      "tags": ["ordem", "planejamento"],
+      "active": true
+    },
+    {
+      "mode": "neutral",
+      "text": "Pequenos passos repetidos constroem grandes resultados.",
+      "author": "Kolbe Planner",
+      "tags": ["perseveranca", "rotina"],
+      "active": true
+    },
+    {
+      "mode": "kolbe",
+      "text": "Tudo pela Imaculada, nada sem Ela.",
+      "author": "São Maximiliano Kolbe",
+      "tags": ["virtude", "entrega"],
+      "active": true
+    },
+    {
+      "mode": "kolbe",
+      "text": "O prudente vê o perigo e busca refúgio.",
+      "author": "Provérbios 22:3",
+      "tags": ["prudencia", "ordem"],
+      "active": true
+    },
+    {
+      "mode": "kolbe",
+      "text": "Quem é fiel no pouco também é fiel no muito.",
+      "author": "Lucas 16:10",
+      "tags": ["disciplina", "dinheiro", "tempo"],
+      "active": true
+    }
+  ]
+}

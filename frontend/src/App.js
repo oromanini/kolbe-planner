@@ -7,6 +7,8 @@ import Dashboard from "./pages/Dashboard";
 import HabitManager from "./pages/HabitManager";
 import AdminDashboard from "./pages/AdminDashboard";
 import FinancialPlanner from "./pages/FinancialPlanner";
+import SettingsPage from "./pages/SettingsPage";
+import AdminQuotes from "./pages/AdminQuotes";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -153,6 +155,22 @@ function AppRouter() {
         element={
           <ProtectedRoute>
             <HabitManager />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/settings" 
+        element={
+          <ProtectedRoute>
+            <SettingsPage />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/admin/quotes" 
+        element={
+          <ProtectedRoute>
+            <AdminQuotes />
           </ProtectedRoute>
         } 
       />

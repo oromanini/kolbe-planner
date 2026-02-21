@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard } from "lucide-react";
 import CalendarGrid from "../components/CalendarGrid";
 import ProgressStats from "../components/ProgressStats";
 import TutorialModal from "../components/TutorialModal";
@@ -17,6 +17,8 @@ export default function Dashboard() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [dailyQuote, setDailyQuote] = useState(null);
+  const [effectiveMode, setEffectiveMode] = useState("neutral");
 
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
@@ -32,6 +34,13 @@ export default function Dashboard() {
       const userRes = await fetch(`${API}/auth/me`, { credentials: 'include' });
       const userData = await userRes.json();
       setUser(userData);
+
+      const quoteRes = await fetch(`${API}/quotes/daily`, { credentials: 'include' });
+      if (quoteRes.ok) {
+        const quoteData = await quoteRes.json();
+        setDailyQuote(quoteData.quote);
+        setEffectiveMode(quoteData.mode || "neutral");
+      }
 
       const habitsRes = await fetch(`${API}/habits`, { credentials: 'include' });
       const habitsData = await habitsRes.json();
@@ -82,7 +91,7 @@ export default function Dashboard() {
       await loadData();
       
       if (result.completed) {
-        toast.success('Hábito marcado!', {
+        toast.success(effectiveMode === 'kolbe' ? 'Persevere! Mais um passo na constância.' : 'Hábito marcado!', {
           duration: 2000,
         });
       }
@@ -155,10 +164,10 @@ export default function Dashboard() {
           
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate('/habits')}
+              onClick={() => navigate('/settings')}
               data-testid="manage-habits-button"
               className="p-2.5 hover:bg-white/5 rounded-lg transition-all text-slate-400 hover:text-white"
-              title="Gerenciar hábitos"
+              title="Configurações"
             >
               <Settings className="w-5 h-5" />
             </button>
@@ -191,6 +200,12 @@ export default function Dashboard() {
         <div className="grid lg:grid-cols-7 gap-8">
           {/* Calendar - Main Area */}
           <div className="lg:col-span-5">
+            {dailyQuote && (
+              <div className="mb-5 p-3 border border-white/10 rounded-xl bg-white/5 text-sm text-slate-300" data-testid="daily-quote">
+                <p className="line-clamp-2">"{dailyQuote.text}" — {dailyQuote.author}</p>
+              </div>
+            )}
+
             {/* Month Navigation */}
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
@@ -252,6 +267,7 @@ export default function Dashboard() {
         <TutorialModal
           onComplete={handleCompleteOnboarding}
           onClose={() => setShowTutorial(false)}
+          kolbeMode={effectiveMode === "kolbe"}
         />
       )}
     </div>
