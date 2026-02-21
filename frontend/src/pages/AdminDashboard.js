@@ -66,6 +66,9 @@ export default function AdminDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mb-6">
+          <button onClick={() => navigate('/admin/quotes')} className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-body">Gerenciar Frases</button>
+        </div>
         {/* Stats Grid */}
         <div className="grid md:grid-cols-3 gap-6 mb-8">
           <motion.div 

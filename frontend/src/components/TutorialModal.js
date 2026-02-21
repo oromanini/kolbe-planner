@@ -5,7 +5,7 @@ import { Dialog, DialogContent } from "./ui/dialog";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function TutorialModal({ onComplete, onClose }) {
+export default function TutorialModal({ onComplete, onClose, kolbeMode = false }) {
   const [step, setStep] = useState(1);
 
   const handleInitializeDefaults = async () => {
@@ -48,7 +48,7 @@ export default function TutorialModal({ onComplete, onClose }) {
                 <span className="text-primary">Kolbe Planner</span>
               </h2>
               <p className="text-slate-400 font-body leading-relaxed text-lg">
-                Configure seus hábitos e comece sua jornada<br />de constância e disciplina.
+                {kolbeMode ? "Configure seus hábitos e caminhe com constância, ordem e propósito." : "Configure seus hábitos e comece sua jornada de constância e disciplina."}
               </p>
             </div>
 
@@ -86,7 +86,7 @@ export default function TutorialModal({ onComplete, onClose }) {
               whileTap={{ scale: 0.98 }}
               className="w-full bg-primary text-primary-foreground px-8 py-4 rounded-full font-body font-bold hover:bg-primary/90 transition-all flex items-center justify-center gap-3 shadow-lg shadow-primary/30"
             >
-              Começar com hábitos sugeridos
+              {kolbeMode ? "Continuar com hábitos sugeridos" : "Começar com hábitos sugeridos"}
               <ArrowRight className="w-5 h-5" />
             </motion.button>
           </motion.div>
@@ -144,7 +144,7 @@ export default function TutorialModal({ onComplete, onClose }) {
               whileTap={{ scale: 0.98 }}
               className="w-full bg-primary text-primary-foreground px-8 py-4 rounded-full font-body font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/30"
             >
-              Entendi, vamos começar!
+              {kolbeMode ? "Continuar" : "Entendi, vamos começar!"}
             </motion.button>
           </motion.div>
         )}

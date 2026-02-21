@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Response, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Response, Header, Query
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,11 +7,14 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Literal
 import uuid
 from datetime import datetime, timezone, timedelta
 import requests
 import hashlib
+import json
+import re
+from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -37,7 +40,20 @@ class User(BaseModel):
     name: str
     picture: Optional[str] = None
     onboarding_completed: bool = False
+    settings: dict = Field(default_factory=lambda: {"kolbe_mode_enabled": False})
     created_at: datetime
+
+
+class Quote(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    mode: Literal["neutral", "kolbe"]
+    text: str
+    author: str
+    tags: List[str] = Field(default_factory=list)
+    active: bool = True
+    created_at: datetime
+    updated_at: datetime
 
 class UserSession(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -95,6 +111,27 @@ class CompletionToggle(BaseModel):
     date: str  # YYYY-MM-DD
 
 
+class UserSettingsUpdate(BaseModel):
+    kolbe_mode_enabled: bool
+
+
+class QuoteCreate(BaseModel):
+    mode: Literal["neutral", "kolbe"]
+    text: str
+    author: str
+    tags: List[str] = Field(default_factory=list)
+    active: bool = True
+
+
+class QuoteImportPayload(BaseModel):
+    version: int
+    items: List[QuoteCreate]
+
+
+class QuoteBulkDeletePayload(BaseModel):
+    ids: List[str]
+
+
 # ============ AUTH HELPER ============
 
 async def get_current_user(
@@ -145,8 +182,52 @@ async def get_current_user(
     # Parse datetime
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    
+    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+
     return User(**user_doc)
+
+
+
+
+def normalize_user_settings(settings: Optional[dict]) -> dict:
+    normalized = {"kolbe_mode_enabled": False}
+    if isinstance(settings, dict):
+        normalized["kolbe_mode_enabled"] = bool(settings.get("kolbe_mode_enabled", False))
+    return normalized
+
+
+def normalize_quote_key(mode: str, text: str, author: str) -> str:
+    def clean(value: str) -> str:
+        return re.sub(r"\s+", " ", (value or "").strip().lower())
+    return f"{clean(mode)}::{clean(text)}::{clean(author)}"
+
+
+def get_user_timezone(user_doc: dict) -> str:
+    settings = user_doc.get("settings") or {}
+    tz = settings.get("timezone")
+    return tz if isinstance(tz, str) and tz else "America/Sao_Paulo"
+
+
+def get_local_day_key(tz_name: str) -> str:
+    try:
+        return datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def require_admin_user(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+) -> User:
+    user = await get_current_user(session_token, authorization)
+    admin_emails = [email.strip().lower() for email in os.environ.get("ADMIN_EMAILS", "").split(",") if email.strip()]
+    allow_emergent = os.environ.get("ALLOW_EMERGENT_ADMIN", "true").lower() == "true"
+    is_admin = user.email.lower() in admin_emails
+    if allow_emergent and "@emergent" in user.email.lower():
+        is_admin = True
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
 
 # ============ AUTH ENDPOINTS ============
@@ -193,6 +274,7 @@ async def create_session(request: SessionRequest, response: Response):
             "name": user_data["name"],
             "picture": user_data.get("picture"),
             "onboarding_completed": False,
+            "settings": {"kolbe_mode_enabled": False},
             "created_at": datetime.now(timezone.utc).isoformat()
         })
     
@@ -222,7 +304,8 @@ async def create_session(request: SessionRequest, response: Response):
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    
+    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+
     return User(**user_doc)
 
 
@@ -247,6 +330,7 @@ async def register(request: RegisterRequest, response: Response):
         "password_hash": password_hash,
         "picture": None,
         "onboarding_completed": False,
+        "settings": {"kolbe_mode_enabled": False},
         "created_at": datetime.now(timezone.utc).isoformat()
     })
     
@@ -275,7 +359,8 @@ async def register(request: RegisterRequest, response: Response):
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    
+    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+
     return User(**user_doc)
 
 
@@ -317,7 +402,8 @@ async def login(request: LoginRequest, response: Response):
     
     if isinstance(user_doc.get('created_at'), str):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    
+    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+
     return User(**user_doc)
 
 
@@ -353,13 +439,78 @@ async def complete_onboarding(
 ):
     """Mark onboarding as completed"""
     user = await get_current_user(session_token, authorization)
-    
+
     await db.users.update_one(
         {"user_id": user.user_id},
         {"$set": {"onboarding_completed": True}}
     )
-    
+
     return {"message": "Onboarding completed"}
+
+
+@api_router.put("/users/settings")
+async def update_user_settings(
+    payload: UserSettingsUpdate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+
+    current_settings = normalize_user_settings(user.settings)
+    new_settings = {
+        **current_settings,
+        "kolbe_mode_enabled": payload.kolbe_mode_enabled
+    }
+
+    await db.users.update_one(
+        {"user_id": user.user_id},
+        {"$set": {"settings": new_settings}}
+    )
+
+    return {"settings": new_settings}
+
+
+@api_router.get("/quotes/daily")
+async def get_daily_quote(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    mode = "kolbe" if user.settings.get("kolbe_mode_enabled") else "neutral"
+    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1}) or {}
+    timezone_name = get_user_timezone(user_doc)
+    local_day = get_local_day_key(timezone_name)
+
+    stored = await db.user_daily_quotes.find_one(
+        {"user_id": user.user_id, "local_day": local_day, "mode": mode},
+        {"_id": 0}
+    )
+    if stored:
+        quote = await db.quotes.find_one({"id": stored["quote_id"], "active": True}, {"_id": 0})
+        if quote:
+            return {"quote": quote, "mode": mode, "local_day": local_day}
+
+    quotes = await db.quotes.find({"mode": mode, "active": True}, {"_id": 0}).to_list(2000)
+    selected_mode = mode
+    if not quotes and mode == "kolbe":
+        quotes = await db.quotes.find({"mode": "neutral", "active": True}, {"_id": 0}).to_list(2000)
+        selected_mode = "neutral"
+
+    if not quotes:
+        return {"quote": None, "mode": selected_mode, "local_day": local_day}
+
+    seed_key = f"{user.user_id}:{local_day}:{selected_mode}".encode()
+    seed = int(hashlib.sha256(seed_key).hexdigest(), 16)
+    quote = quotes[seed % len(quotes)]
+
+    await db.user_daily_quotes.update_one(
+        {"user_id": user.user_id, "local_day": local_day, "mode": selected_mode},
+        {"$set": {"quote_id": quote["id"], "updated_at": datetime.now(timezone.utc).isoformat()},
+         "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+
+    return {"quote": quote, "mode": selected_mode, "local_day": local_day}
 
 
 # ============ HABITS ENDPOINTS ============
@@ -913,14 +1064,14 @@ async def admin_get_users(
     authorization: Optional[str] = Header(None)
 ):
     """Get all users (admin only)"""
-    user = await get_current_user(session_token, authorization)
-    
+    await require_admin_user(session_token, authorization)
+
     users = await db.users.find({}, {"_id": 0}).to_list(1000)
-    
+
     for u in users:
         if isinstance(u.get('created_at'), str):
             u['created_at'] = datetime.fromisoformat(u['created_at'])
-    
+
     return users
 
 
@@ -930,17 +1081,226 @@ async def admin_get_stats(
     authorization: Optional[str] = Header(None)
 ):
     """Get platform stats (admin only)"""
-    user = await get_current_user(session_token, authorization)
-    
+    await require_admin_user(session_token, authorization)
+
     total_users = await db.users.count_documents({})
     total_habits = await db.habits.count_documents({})
     total_completions = await db.habit_completions.count_documents({"completed": True})
-    
+
     return {
         "total_users": total_users,
         "total_habits": total_habits,
         "total_completions": total_completions
     }
+
+
+@api_router.get("/admin/quotes")
+async def admin_list_quotes(
+    q: str = "",
+    mode: Optional[Literal["neutral", "kolbe"]] = None,
+    active: Optional[bool] = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    query = {}
+    if mode:
+        query["mode"] = mode
+    if active is not None:
+        query["active"] = active
+    if q:
+        query["$or"] = [
+            {"text": {"$regex": re.escape(q), "$options": "i"}},
+            {"author": {"$regex": re.escape(q), "$options": "i"}}
+        ]
+
+    total = await db.quotes.count_documents(query)
+    cursor = db.quotes.find(query, {"_id": 0}).sort("updated_at", -1).skip((page - 1) * page_size).limit(page_size)
+    items = await cursor.to_list(page_size)
+
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@api_router.post("/admin/quotes", status_code=201)
+async def admin_create_quote(
+    payload: QuoteCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    if not payload.author.strip():
+        raise HTTPException(status_code=400, detail="author is required")
+
+    quote = {
+        "id": f"quote_{uuid.uuid4().hex[:12]}",
+        "mode": payload.mode,
+        "text": payload.text.strip(),
+        "author": payload.author.strip(),
+        "tags": [t.strip() for t in payload.tags if t.strip()],
+        "active": payload.active,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author)
+    }
+    await db.quotes.insert_one(quote)
+    quote.pop("dedupe_key", None)
+    return quote
+
+
+@api_router.put("/admin/quotes/{quote_id}")
+async def admin_update_quote(
+    quote_id: str,
+    payload: QuoteCreate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    update = {
+        "mode": payload.mode,
+        "text": payload.text.strip(),
+        "author": payload.author.strip(),
+        "tags": [t.strip() for t in payload.tags if t.strip()],
+        "active": payload.active,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author)
+    }
+
+    result = await db.quotes.update_one({"id": quote_id}, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Quote not found")
+
+    quote = await db.quotes.find_one({"id": quote_id}, {"_id": 0, "dedupe_key": 0})
+    return quote
+
+
+@api_router.delete("/admin/quotes/{quote_id}")
+async def admin_delete_quote(
+    quote_id: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+    result = await db.quotes.delete_one({"id": quote_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    return {"deleted": [quote_id], "failed": []}
+
+
+@api_router.post("/admin/quotes/bulk-delete")
+async def admin_bulk_delete_quotes(
+    payload: QuoteBulkDeletePayload,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    ids = [quote_id for quote_id in payload.ids if quote_id]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No ids provided")
+
+    existing = await db.quotes.find({"id": {"$in": ids}}, {"_id": 0, "id": 1}).to_list(len(ids))
+    existing_ids = {item["id"] for item in existing}
+    failed = [{"id": quote_id, "reason": "not_found"} for quote_id in ids if quote_id not in existing_ids]
+
+    if existing_ids:
+        await db.quotes.delete_many({"id": {"$in": list(existing_ids)}})
+
+    return {"deleted": list(existing_ids), "failed": failed}
+
+
+@api_router.post("/admin/quotes/import")
+async def admin_import_quotes(
+    payload: QuoteImportPayload,
+    strict: bool = False,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    if payload.version != 1:
+        raise HTTPException(status_code=400, detail="Unsupported version")
+
+    report = {
+        "total_lidas": len(payload.items),
+        "criadas": 0,
+        "ignoradas_duplicadas": 0,
+        "invalidas": 0,
+        "erros": []
+    }
+
+    existing_docs = await db.quotes.find({}, {"_id": 0, "dedupe_key": 1}).to_list(10000)
+    existing_keys = {doc.get("dedupe_key") for doc in existing_docs if doc.get("dedupe_key")}
+
+    valid_docs = []
+    for idx, item in enumerate(payload.items):
+        errors = []
+        if item.mode not in ["neutral", "kolbe"]:
+            errors.append("mode inválido")
+        if not item.text.strip():
+            errors.append("text obrigatório")
+        author = item.author.strip() or "Desconhecido"
+        if not author:
+            errors.append("author obrigatório")
+
+        if errors:
+            report["invalidas"] += 1
+            report["erros"].append({"index": idx, "erros": errors})
+            continue
+
+        key = normalize_quote_key(item.mode, item.text, author)
+        if key in existing_keys:
+            report["ignoradas_duplicadas"] += 1
+            continue
+
+        quote = {
+            "id": f"quote_{uuid.uuid4().hex[:12]}",
+            "mode": item.mode,
+            "text": item.text.strip(),
+            "author": author,
+            "tags": [t.strip() for t in item.tags if t.strip()],
+            "active": item.active,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "dedupe_key": key
+        }
+        valid_docs.append(quote)
+        existing_keys.add(key)
+
+    if strict and report["invalidas"] > 0:
+        return report
+
+    if valid_docs:
+        await db.quotes.insert_many(valid_docs)
+        report["criadas"] = len(valid_docs)
+
+    return report
+
+
+@api_router.post("/admin/quotes/import-seed")
+async def admin_import_seed_quotes(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    await require_admin_user(session_token, authorization)
+
+    seed_path = ROOT_DIR / "seed_quotes.json"
+    if not seed_path.exists():
+        raise HTTPException(status_code=404, detail="Seed file not found")
+
+    try:
+        data = json.loads(seed_path.read_text())
+        payload = QuoteImportPayload(**data)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid seed JSON: {exc}")
+
+    return await admin_import_quotes(payload, False, session_token, authorization)
 
 
 # Include the router in the main app
