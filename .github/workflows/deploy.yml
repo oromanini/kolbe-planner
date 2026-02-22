@@ -1,0 +1,92 @@
+name: Deploy Kolbe Planner (Cloud Run)
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: us-central1
+  REPO: kolbe
+
+  BACKEND_SERVICE: kolbe-backend
+  FRONTEND_SERVICE: kolbe-frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate required secrets (anti-Alluz)
+        run: |
+          test -n "${{ secrets.GCP_PROJECT_ID }}"
+          test -n "${{ secrets.GCP_WIF_PROVIDER }}"
+          test -n "${{ secrets.GCP_SA_EMAIL }}"
+          test -n "${{ secrets.MONGO_URL }}"
+          test -n "${{ secrets.DB_NAME }}"
+          echo "OK: required secrets present"
+
+      - name: Auth to Google Cloud (WIF / OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # ---------- BACKEND ----------
+      - name: Build & Push backend image
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${BACKEND_SERVICE}:${GITHUB_SHA}"
+          docker build -t "${IMAGE}" backend
+          docker push "${IMAGE}"
+          echo "BACKEND_IMAGE=${IMAGE}" >> $GITHUB_ENV
+
+      - name: Deploy backend to Cloud Run
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          gcloud run deploy "${BACKEND_SERVICE}" \
+            --image "${BACKEND_IMAGE}" \
+            --region "${REGION}" \
+            --project "${PROJECT_ID}" \
+            --allow-unauthenticated \
+            --port 8080 \
+            --set-env-vars "MONGO_URL=${{ secrets.MONGO_URL }},DB_NAME=${{ secrets.DB_NAME }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+
+      - name: Read backend URL
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          BACKEND_URL="$(gcloud run services describe "${BACKEND_SERVICE}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
+          echo "BACKEND_URL=${BACKEND_URL}" >> $GITHUB_ENV
+          echo "Backend URL: ${BACKEND_URL}"
+
+      # ---------- FRONTEND ----------
+      - name: Build & Push frontend image
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${FRONTEND_SERVICE}:${GITHUB_SHA}"
+          docker build \
+            --build-arg REACT_APP_BACKEND_URL="${BACKEND_URL}" \
+            -t "${IMAGE}" frontend
+          docker push "${IMAGE}"
+          echo "FRONTEND_IMAGE=${IMAGE}" >> $GITHUB_ENV
+
+      - name: Deploy frontend to Cloud Run
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          gcloud run deploy "${FRONTEND_SERVICE}" \
+            --image "${FRONTEND_IMAGE}" \
+            --region "${REGION}" \
+            --project "${PROJECT_ID}" \
+            --allow-unauthenticated \
+            --port 8080
