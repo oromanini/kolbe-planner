@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import "@/App.css";
 import LandingPage from "./pages/LandingPage";
@@ -13,62 +13,6 @@ import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-
-// AuthCallback Component
-function AuthCallback() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const hasProcessed = useRef(false);
-
-  useEffect(() => {
-    if (hasProcessed.current) return;
-    hasProcessed.current = true;
-
-    const processSessionId = async () => {
-      const hash = location.hash;
-      const params = new URLSearchParams(hash.substring(1));
-      const sessionId = params.get('session_id');
-
-      if (!sessionId) {
-        navigate('/');
-        return;
-      }
-
-      try {
-        const response = await fetch(`${API}/auth/session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId }),
-          credentials: 'include'
-        });
-
-        if (!response.ok) throw new Error('Auth failed');
-
-        const user = await response.json();
-        
-        // Navigate to hub with user data
-        navigate('/hub', { 
-          replace: true, 
-          state: { user } 
-        });
-      } catch (error) {
-        console.error('Auth error:', error);
-        navigate('/');
-      }
-    };
-
-    processSessionId();
-  }, [location, navigate]);
-
-  return (
-    <div className="min-h-screen bg-paper flex items-center justify-center">
-      <div className="text-center">
-        <div className="w-16 h-16 border-4 border-navy border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-navy font-body">Autenticando...</p>
-      </div>
-    </div>
-  );
-}
 
 // ProtectedRoute Component
 function ProtectedRoute({ children }) {
@@ -116,13 +60,6 @@ function ProtectedRoute({ children }) {
 
 // AppRouter Component
 function AppRouter() {
-  const location = useLocation();
-  
-  // CRITICAL: Check session_id synchronously during render
-  if (location.hash?.includes('session_id=')) {
-    return <AuthCallback />;
-  }
-
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
