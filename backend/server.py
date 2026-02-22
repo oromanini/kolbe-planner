@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
 import uuid
 from datetime import datetime, timezone, timedelta
-import requests
 import hashlib
 import json
 import re
@@ -82,9 +81,6 @@ class HabitCompletion(BaseModel):
     completed_at: Optional[datetime] = None
 
 # ============ INPUT MODELS ============
-
-class SessionRequest(BaseModel):
-    session_id: str
 
 class LoginRequest(BaseModel):
     email: str
@@ -221,93 +217,13 @@ async def require_admin_user(
 ) -> User:
     user = await get_current_user(session_token, authorization)
     admin_emails = [email.strip().lower() for email in os.environ.get("ADMIN_EMAILS", "").split(",") if email.strip()]
-    allow_emergent = os.environ.get("ALLOW_EMERGENT_ADMIN", "true").lower() == "true"
     is_admin = user.email.lower() in admin_emails
-    if allow_emergent and "@emergent" in user.email.lower():
-        is_admin = True
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 
 # ============ AUTH ENDPOINTS ============
-
-@api_router.post("/auth/session")
-async def create_session(request: SessionRequest, response: Response):
-    """Exchange session_id from Emergent Auth for session_token"""
-    
-    # Call Emergent Auth API
-    try:
-        auth_response = requests.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-            headers={"X-Session-ID": request.session_id},
-            timeout=10
-        )
-        auth_response.raise_for_status()
-        user_data = auth_response.json()
-    except Exception as e:
-        logging.error(f"Emergent Auth error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid session_id")
-    
-    # Check if user exists
-    existing_user = await db.users.find_one(
-        {"email": user_data["email"]},
-        {"_id": 0}
-    )
-    
-    if existing_user:
-        user_id = existing_user["user_id"]
-        # Update user data
-        await db.users.update_one(
-            {"user_id": user_id},
-            {"$set": {
-                "name": user_data["name"],
-                "picture": user_data.get("picture")
-            }}
-        )
-    else:
-        # Create new user
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": user_data["email"],
-            "name": user_data["name"],
-            "picture": user_data.get("picture"),
-            "onboarding_completed": False,
-            "settings": {"kolbe_mode_enabled": False},
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-    
-    # Create session
-    session_token = user_data["session_token"]
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
-    await db.user_sessions.insert_one({
-        "session_token": session_token,
-        "user_id": user_id,
-        "expires_at": expires_at.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    
-    # Set httpOnly cookie
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        path="/",
-        max_age=7*24*60*60
-    )
-    
-    # Return user
-    user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if isinstance(user_doc.get('created_at'), str):
-        user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
-
-    return User(**user_doc)
-
 
 @api_router.post("/auth/register")
 async def register(request: RegisterRequest, response: Response):

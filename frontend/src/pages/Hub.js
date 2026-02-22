@@ -39,11 +39,9 @@ export default function Hub() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img 
-              src="https://customer-assets.emergentagent.com/job_dayminder-4/artifacts/sptbro7d_Kolbe%20Planner%20%282%29.png" 
-              alt="Kolbe Planner" 
-              className="h-10 w-10 object-contain"
-            />
+            <div className="h-10 w-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center font-heading text-primary">
+              K
+            </div>
             <span className="font-heading text-xl font-medium text-white">Kolbe Planner</span>
           </div>
           <button

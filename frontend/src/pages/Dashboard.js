@@ -145,11 +145,9 @@ export default function Dashboard() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img 
-              src="https://customer-assets.emergentagent.com/job_dayminder-4/artifacts/sptbro7d_Kolbe%20Planner%20%282%29.png" 
-              alt="Kolbe Planner" 
-              className="h-12 w-12 object-contain"
-            />
+            <div className="h-12 w-12 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center font-heading text-primary text-xl">
+              K
+            </div>
             <div>
               <h1 className="font-heading text-2xl font-medium text-white" data-testid="dashboard-title">
                 Kolbe Planner
@@ -172,7 +170,7 @@ export default function Dashboard() {
               <Settings className="w-5 h-5" />
             </button>
             
-            {user?.email && user.email.includes('@emergent') && (
+            {user?.is_admin && (
               <button
                 onClick={() => navigate('/admin')}
                 data-testid="admin-button"

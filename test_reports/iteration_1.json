@@ -20,7 +20,7 @@
   
   "passed_tests": [
     "Landing page loads with correct minimalist design (navy/gold/paper colors, Playfair Display + Manrope fonts)",
-    "Google OAuth login redirects correctly to auth.emergentagent.com",
+    "Google OAuth login redirects correctly to auth provider",
     "Dashboard authentication and session management working",
     "Tutorial modal appears for new users and creates default habits",
     "Calendar grid displays correctly with 7-column layout",
