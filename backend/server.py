@@ -583,6 +583,7 @@ class FinancialCategory(BaseModel):
     category_id: str
     user_id: str
     name: str
+    icon: str
     created_at: datetime
 
 class Expense(BaseModel):
@@ -640,6 +641,11 @@ class MethodCreate(BaseModel):
 
 class CategoryCreate(BaseModel):
     name: str
+    icon: str
+
+class CategoryUpdate(BaseModel):
+    name: str
+    icon: str
 
 
 # ============ FINANCIAL ENDPOINTS ============
@@ -691,10 +697,78 @@ async def create_category(
         "category_id": f"cat_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
         "name": data.name,
+        "icon": data.icon,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.financial_categories.insert_one(category)
     return category
+
+@api_router.put("/finance/categories/{category_id}")
+async def update_category(
+    category_id: str,
+    data: CategoryUpdate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    existing = await db.financial_categories.find_one(
+        {"category_id": category_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    await db.financial_categories.update_one(
+        {"category_id": category_id, "user_id": user.user_id},
+        {"$set": {"name": data.name, "icon": data.icon}}
+    )
+
+    if existing.get("name") != data.name:
+        await db.expenses.update_many(
+            {"user_id": user.user_id, "category": existing.get("name")},
+            {"$set": {"category": data.name}}
+        )
+
+    category = await db.financial_categories.find_one(
+        {"category_id": category_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    return category
+
+@api_router.delete("/finance/categories/{category_id}")
+async def delete_category(
+    category_id: str,
+    force: bool = False,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    category = await db.financial_categories.find_one(
+        {"category_id": category_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
+    if not category:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    linked_items_count = await db.expenses.count_documents({
+        "user_id": user.user_id,
+        "category": category["name"]
+    })
+
+    if linked_items_count > 0 and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Category has linked items",
+                "linked_items_count": linked_items_count
+            }
+        )
+
+    await db.financial_categories.delete_one({"category_id": category_id, "user_id": user.user_id})
+    if linked_items_count > 0:
+        await db.expenses.delete_many({"user_id": user.user_id, "category": category["name"]})
+
+    return {"message": "Category deleted", "deleted_expenses": linked_items_count}
 
 # Expenses
 @api_router.get("/finance/expenses")
@@ -717,6 +791,13 @@ async def create_expense(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+    category_exists = await db.financial_categories.find_one(
+        {"user_id": user.user_id, "name": data.category},
+        {"_id": 0, "category_id": 1}
+    )
+    if not category_exists:
+        raise HTTPException(status_code=400, detail="Invalid category")
+
     expense = {
         "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
