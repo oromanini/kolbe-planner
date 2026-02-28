@@ -260,7 +260,7 @@ export default function Dashboard() {
               habits={habits}
               completions={completions}
               onToggleCompletion={handleToggleCompletion}
-              onCreateGoal={() => navigate('/settings')}
+              onCreateGoal={() => navigate('/habits')}
             />
           </div>
 
