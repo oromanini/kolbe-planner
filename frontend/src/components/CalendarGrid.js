@@ -20,26 +20,51 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
     calendarDays.push(day);
   }
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const toDate = (dateString) => {
+    const [yearPart, monthPart, dayPart] = dateString.split('-').map(Number);
+    return new Date(yearPart, monthPart - 1, dayPart);
+  };
+
+  const getDateForDay = (day) => new Date(year, month - 1, day);
+
+  const isPastDay = (day) => {
+    const date = getDateForDay(day);
+    date.setHours(0, 0, 0, 0);
+    return date < today;
+  };
+
+  const isHabitInPeriod = (habit, day) => {
+    const date = getDateForDay(day);
+    const start = toDate(habit.start_date);
+    const end = toDate(habit.end_date);
+    return date >= start && date <= end;
+  };
+
+  const canToggleAnyHabitOnDay = (day) => !isPastDay(day) && habits.some((habit) => isHabitInPeriod(habit, day));
+
   const getCompletionsForDay = (day) => {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return completions.filter(c => c.date === dateStr);
   };
 
   const getDayProgress = (day) => {
-    if (habits.length === 0) return { completed: 0, total: 0, percentage: 0 };
-    
-    const dayCompletions = getCompletionsForDay(day);
-    const completedCount = dayCompletions.filter(c => c.completed).length;
-    
+    const activeHabits = habits.filter((habit) => isHabitInPeriod(habit, day));
+    if (activeHabits.length === 0) return { completed: 0, total: 0, percentage: 0 };
+
+    const completedCount = activeHabits.filter((habit) => isHabitCompletedOnDay(habit.habit_id, day)).length;
+
     return {
       completed: completedCount,
-      total: habits.length,
-      percentage: (completedCount / habits.length) * 100
+      total: activeHabits.length,
+      percentage: (completedCount / activeHabits.length) * 100
     };
   };
 
   const handleDayClick = (day) => {
-    if (!day) return;
+    if (!day || !canToggleAnyHabitOnDay(day)) return;
     setSelectedDay(day);
     setIsDialogOpen(true);
   };
@@ -85,18 +110,20 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
             const progress = getDayProgress(day);
             const isComplete = progress.percentage === 100 && progress.total > 0;
             const isPartial = progress.percentage > 0 && progress.percentage < 100;
+            const dayLocked = !canToggleAnyHabitOnDay(day);
 
             return (
               <motion.button
                 key={day}
                 data-testid={`calendar-day-${day}`}
                 onClick={() => handleDayClick(day)}
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+                whileHover={dayLocked ? undefined : { scale: 1.05 }}
+                whileTap={dayLocked ? undefined : { scale: 0.95 }}
                 className={`
-                  bg-background-paper aspect-square p-2 relative hover:bg-background-subtle transition-all cursor-pointer group min-h-[80px]
+                  bg-background-paper aspect-square p-2 relative transition-all group min-h-[80px]
                   ${isComplete ? 'bg-gradient-to-br from-primary/20 to-primary/5 shadow-glow' : ''}
                   ${isPartial ? 'bg-white/5' : ''}
+                  ${dayLocked ? 'opacity-45 cursor-not-allowed' : 'hover:bg-background-subtle cursor-pointer'}
                 `}
               >
                 {/* Day number */}
@@ -109,7 +136,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
 
                 {/* Habit list with names */}
                 <div className="space-y-0.5 text-left overflow-hidden">
-                  {habits.slice(0, 4).map((habit) => {
+                  {habits.filter((habit) => isHabitInPeriod(habit, day)).slice(0, 4).map((habit) => {
                     const completed = isHabitCompletedOnDay(habit.habit_id, day);
                     return (
                       <div
@@ -129,9 +156,9 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                       </div>
                     );
                   })}
-                  {habits.length > 4 && (
+                  {habits.filter((habit) => isHabitInPeriod(habit, day)).length > 4 && (
                     <div className="text-[9px] text-slate-600 text-center">
-                      +{habits.length - 4}
+                      +{habits.filter((habit) => isHabitInPeriod(habit, day)).length - 4}
                     </div>
                   )}
                 </div>
@@ -167,10 +194,10 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
               </button>
             </div>
 
-            {habits.length === 0 ? (
+            {habits.filter((habit) => selectedDay && isHabitInPeriod(habit, selectedDay)).length === 0 ? (
               <div className="text-center py-10 space-y-4">
                 <p className="text-slate-400 font-body">
-                  Nenhum objetivo criado ainda.
+                  Nenhum objetivo ativo nesta data.
                 </p>
                 <button
                   onClick={() => {
@@ -185,9 +212,9 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
             ) : (
               <div className="space-y-3" data-testid="habits-list">
                 <AnimatePresence>
-                  {habits.map((habit, index) => {
+                  {habits.filter((habit) => selectedDay && isHabitInPeriod(habit, selectedDay)).map((habit, index) => {
                     const completed = selectedDay ? isHabitCompletedOnDay(habit.habit_id, selectedDay) : false;
-                    
+
                     return (
                       <motion.button
                         key={habit.habit_id}
