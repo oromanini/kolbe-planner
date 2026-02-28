@@ -10,7 +10,7 @@ permissions:
 
 env:
   REGION: us-central1
-  REPO: kolbe
+  REPO: kolbe-planner
 
   BACKEND_SERVICE: kolbe-backend
   FRONTEND_SERVICE: kolbe-frontend
