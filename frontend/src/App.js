@@ -10,6 +10,7 @@ import FinancialPlanner from "./pages/FinancialPlanner";
 import SettingsPage from "./pages/SettingsPage";
 import AdminQuotes from "./pages/AdminQuotes";
 import { Toaster } from "./components/ui/sonner";
+import PlannerTipsAssistant from "./components/PlannerTipsAssistant";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -123,13 +124,22 @@ function AppRouter() {
   );
 }
 
+function AppShell() {
+  return (
+    <>
+      <AppRouter />
+      <PlannerTipsAssistant />
+      <Toaster />
+    </>
+  );
+}
+
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <AppRouter />
+        <AppShell />
       </BrowserRouter>
-      <Toaster />
     </div>
   );
 }
