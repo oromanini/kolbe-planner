@@ -179,7 +179,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                   }}
                   className="px-4 py-2 rounded-lg bg-primary text-white font-body font-medium hover:opacity-90 transition-opacity"
                 >
-                  Cadastrar objetivo
+                  Gerenciar objetivos
                 </button>
               </div>
             ) : (
