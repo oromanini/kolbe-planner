@@ -216,7 +216,7 @@ async def require_admin_user(
     authorization: Optional[str] = Header(None)
 ) -> User:
     user = await get_current_user(session_token, authorization)
-    admin_emails = [email.strip().lower() for email in os.environ.get("ADMIN_EMAILS", "").split(",") if email.strip()]
+    admin_emails = [email.strip().lower() for email in os.environ.get("ADMIN_EMAILS", "oscar.romanini.jr@gmail.com").split(",") if email.strip()]
     is_admin = user.email.lower() in admin_emails
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
