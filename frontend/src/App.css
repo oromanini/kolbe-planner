@@ -7,3 +7,8 @@
 .App {
   min-height: 100vh;
 }
+
+.calendar-white::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 1;
+}
