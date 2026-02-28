@@ -14,11 +14,16 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false);
   const [wordIndex, setWordIndex] = useState(0);
   
-  const words = ["HÁBITOS DIÁRIOS", "METAS", "CALENDÁRIO", "TEMPO", "DINHEIRO"];
+  const rotatingPhrases = [
+    "Domine suas metas",
+    "Domine seu dinheiro",
+    "Domine seu tempo",
+    "Domine seus hábitos"
+  ];
   
   useEffect(() => {
     const interval = setInterval(() => {
-      setWordIndex((prev) => (prev + 1) % words.length);
+      setWordIndex((prev) => (prev + 1) % rotatingPhrases.length);
     }, 2000);
     return () => clearInterval(interval);
   }, []);
@@ -61,9 +66,11 @@ export default function LandingPage() {
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-background-paper/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center font-heading text-primary">
-              K
-            </div>
+            <img
+              src="/kp-logo.svg"
+              alt="Kolbe Planner"
+              className="h-10 w-10 rounded-xl object-contain"
+            />
             <span className="font-heading text-xl font-medium text-white">
               Kolbe Planner
             </span>
@@ -102,7 +109,6 @@ export default function LandingPage() {
               className="font-heading text-6xl md:text-8xl font-medium tracking-tight leading-none mb-8"
               data-testid="landing-hero-title"
             >
-              Domine seus<br />
               <AnimatePresence mode="wait">
                 <motion.span 
                   key={wordIndex}
@@ -112,7 +118,7 @@ export default function LandingPage() {
                   transition={{ duration: 0.5 }}
                   className="text-primary inline-block"
                 >
-                  {words[wordIndex]}
+                  {rotatingPhrases[wordIndex]}
                 </motion.span>
               </AnimatePresence>
             </h1>
