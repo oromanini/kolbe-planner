@@ -15,10 +15,10 @@ export default function LandingPage() {
   const [wordIndex, setWordIndex] = useState(0);
   
   const rotatingPhrases = [
-    "Domine suas metas",
-    "Domine seu dinheiro",
-    "Domine seu tempo",
-    "Domine seus hábitos"
+    "suas metas",
+    "seu dinheiro",
+    "seu tempo",
+    "seus hábitos"
   ];
   
   useEffect(() => {
@@ -69,7 +69,7 @@ export default function LandingPage() {
             <img
               src="/kp-logo.svg"
               alt="Kolbe Planner"
-              className="h-10 w-10 rounded-xl object-contain"
+              className="h-10 w-auto object-contain"
             />
             <span className="font-heading text-xl font-medium text-white">
               Kolbe Planner
@@ -116,9 +116,10 @@ export default function LandingPage() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
                   transition={{ duration: 0.5 }}
-                  className="text-primary inline-block"
+                  className="inline-block"
                 >
-                  {rotatingPhrases[wordIndex]}
+                  <span className="text-white">DOMINE</span>{" "}
+                  <span className="text-primary">{rotatingPhrases[wordIndex]}</span>
                 </motion.span>
               </AnimatePresence>
             </h1>
