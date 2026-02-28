@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard, Target, Landmark } from "lucide-react";
 import CalendarGrid from "../components/CalendarGrid";
 import ProgressStats from "../components/ProgressStats";
 import TutorialModal from "../components/TutorialModal";
@@ -145,9 +145,7 @@ export default function Dashboard() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center font-heading text-primary text-xl">
-              K
-            </div>
+            <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-12 w-12 rounded-xl border border-white/10 p-1.5 bg-white/5" />
             <div>
               <h1 className="font-heading text-2xl font-medium text-white" data-testid="dashboard-title">
                 Kolbe Planner
@@ -158,6 +156,23 @@ export default function Dashboard() {
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="hidden md:flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-1">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="px-3 py-2 rounded-lg bg-primary/20 text-primary text-sm font-medium flex items-center gap-2"
+            >
+              <Target className="w-4 h-4" />
+              Planner de Metas
+            </button>
+            <button
+              onClick={() => navigate('/finance')}
+              className="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-all"
+            >
+              <Landmark className="w-4 h-4" />
+              Planner Financeiro
+            </button>
           </div>
           
           <div className="flex items-center gap-2">
@@ -245,6 +260,7 @@ export default function Dashboard() {
               habits={habits}
               completions={completions}
               onToggleCompletion={handleToggleCompletion}
+              onCreateGoal={() => navigate('/settings')}
             />
           </div>
 
