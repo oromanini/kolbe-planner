@@ -22,6 +22,7 @@ import {
   Plane,
   Receipt,
   Landmark,
+  Target,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { toast } from "sonner";
@@ -238,14 +239,34 @@ export default function FinancialPlanner() {
             </button>
             <h1 className="font-heading text-2xl font-medium text-white">Planner Financeiro</h1>
           </div>
-          <div className="relative">
-            <Calendar className="w-4 h-4 text-white absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="month"
-              value={currentMonth}
-              onChange={(e) => setCurrentMonth(e.target.value)}
-              className="calendar-white pl-10 px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
-            />
+
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-1">
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="px-3 py-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/5 text-sm font-medium flex items-center gap-2 transition-all"
+              >
+                <Target className="w-4 h-4" />
+                Planner de Metas
+              </button>
+              <button
+                onClick={() => navigate('/finance')}
+                className="px-3 py-2 rounded-lg bg-primary/20 text-primary text-sm font-medium flex items-center gap-2"
+              >
+                <Landmark className="w-4 h-4" />
+                Planner Financeiro
+              </button>
+            </div>
+
+            <div className="relative">
+              <Calendar className="w-4 h-4 text-white absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="month"
+                value={currentMonth}
+                onChange={(e) => setCurrentMonth(e.target.value)}
+                className="calendar-white pl-10 px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+              />
+            </div>
           </div>
         </div>
       </header>

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { Dialog, DialogContent } from "./ui/dialog";
 
-export default function CalendarGrid({ year, month, habits, completions, onToggleCompletion }) {
+export default function CalendarGrid({ year, month, habits, completions, onToggleCompletion, onCreateGoal }) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -168,9 +168,20 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
             </div>
 
             {habits.length === 0 ? (
-              <p className="text-slate-400 font-body text-center py-12">
-                Nenhum hábito criado ainda.
-              </p>
+              <div className="text-center py-10 space-y-4">
+                <p className="text-slate-400 font-body">
+                  Nenhum objetivo criado ainda.
+                </p>
+                <button
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    onCreateGoal?.();
+                  }}
+                  className="px-4 py-2 rounded-lg bg-primary text-white font-body font-medium hover:opacity-90 transition-opacity"
+                >
+                  Cadastrar objetivo
+                </button>
+              </div>
             ) : (
               <div className="space-y-3" data-testid="habits-list">
                 <AnimatePresence>
