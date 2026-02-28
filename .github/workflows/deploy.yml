@@ -3,9 +3,15 @@ name: Deploy Kolbe Planner (Cloud Run)
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you triggering this deploy manually?"
+        required: false
+        default: "Manual redeploy from latest main"
 
 concurrency:
-  group: deploy-main
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
