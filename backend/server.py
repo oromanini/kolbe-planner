@@ -68,6 +68,8 @@ class Habit(BaseModel):
     name: str
     color: str
     icon: str
+    start_date: str  # YYYY-MM-DD format
+    end_date: str  # YYYY-MM-DD format
     order: int
     created_at: datetime
 
@@ -95,11 +97,15 @@ class HabitCreate(BaseModel):
     name: str
     color: str
     icon: str = "circle"
+    start_date: str
+    end_date: str
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
     icon: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     order: Optional[int] = None
 
 class CompletionToggle(BaseModel):
@@ -209,6 +215,24 @@ def get_local_day_key(tz_name: str) -> str:
         return datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
     except Exception:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def parse_day_key(value: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD") from exc
+
+
+def ensure_period_is_valid(start_date: str, end_date: str, min_date: Optional[str] = None):
+    start = parse_day_key(start_date)
+    end = parse_day_key(end_date)
+    if end < start:
+        raise HTTPException(status_code=400, detail="End date must be greater than or equal to start date")
+    if min_date:
+        minimum = parse_day_key(min_date)
+        if start < minimum:
+            raise HTTPException(status_code=400, detail="Start date cannot be in the past")
 
 
 async def require_admin_user(
@@ -448,6 +472,12 @@ async def get_habits(
     for habit in habits:
         if isinstance(habit.get('created_at'), str):
             habit['created_at'] = datetime.fromisoformat(habit['created_at'])
+        start_date = habit.get('start_date')
+        if not start_date:
+            start_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            habit['start_date'] = start_date
+        if not habit.get('end_date'):
+            habit['end_date'] = start_date
     
     return habits
 
@@ -474,12 +504,18 @@ async def create_habit(
     )
     next_order = (last_habit["order"] + 1) if last_habit else 0
     
+    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+    today_key = get_local_day_key(get_user_timezone(user_doc or {}))
+    ensure_period_is_valid(habit_data.start_date, habit_data.end_date, today_key)
+
     habit = Habit(
         habit_id=f"habit_{uuid.uuid4().hex[:12]}",
         user_id=user.user_id,
         name=habit_data.name,
         color=habit_data.color,
         icon=habit_data.icon,
+        start_date=habit_data.start_date,
+        end_date=habit_data.end_date,
         order=next_order,
         created_at=datetime.now(timezone.utc)
     )
@@ -512,6 +548,12 @@ async def update_habit(
     # Update
     update_data = {k: v for k, v in habit_data.model_dump().items() if v is not None}
     if update_data:
+        user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+        today_key = get_local_day_key(get_user_timezone(user_doc or {}))
+        next_start_date = update_data.get("start_date", habit.get("start_date", today_key))
+        next_end_date = update_data.get("end_date", habit.get("end_date", next_start_date))
+        ensure_period_is_valid(next_start_date, next_end_date, today_key)
+
         await db.habits.update_one(
             {"habit_id": habit_id},
             {"$set": update_data}
@@ -521,7 +563,11 @@ async def update_habit(
     updated_habit = await db.habits.find_one({"habit_id": habit_id}, {"_id": 0})
     if isinstance(updated_habit.get('created_at'), str):
         updated_habit['created_at'] = datetime.fromisoformat(updated_habit['created_at'])
-    
+    if not updated_habit.get('start_date'):
+        updated_habit['start_date'] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not updated_habit.get('end_date'):
+        updated_habit['end_date'] = updated_habit['start_date']
+
     return Habit(**updated_habit)
 
 
@@ -954,6 +1000,8 @@ async def get_summary(
             "name": h["name"],
             "color": h["color"],
             "icon": h["icon"],
+            "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d"),
             "order": i,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
@@ -1015,6 +1063,19 @@ async def toggle_completion(
     )
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
+
+    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+    today_key = get_local_day_key(get_user_timezone(user_doc or {}))
+    selected_date = parse_day_key(data.date)
+    if selected_date < parse_day_key(today_key):
+        raise HTTPException(status_code=400, detail="Past dates are locked. You can only update today or future dates")
+
+    habit_start = habit.get("start_date")
+    habit_end = habit.get("end_date")
+    if habit_start and selected_date < parse_day_key(habit_start):
+        raise HTTPException(status_code=400, detail="Date is before this objective period")
+    if habit_end and selected_date > parse_day_key(habit_end):
+        raise HTTPException(status_code=400, detail="Date is after this objective period")
     
     # Check if completion exists
     existing = await db.habit_completions.find_one(

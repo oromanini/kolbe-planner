@@ -22,10 +22,13 @@ export default function HabitManager() {
   const [habits, setHabits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const todayKey = new Date().toISOString().split('T')[0];
   const [newHabit, setNewHabit] = useState({
     name: "",
     color: "#CD1C33",
-    icon: "circle"
+    icon: "circle",
+    start_date: todayKey,
+    end_date: todayKey
   });
 
   useEffect(() => {
@@ -49,12 +52,22 @@ export default function HabitManager() {
     e.preventDefault();
     
     if (!newHabit.name.trim()) {
-      toast.error('Digite um nome para o hábito');
+      toast.error('Digite um nome para o objetivo');
       return;
     }
 
     if (habits.length >= 10) {
       toast.error('Máximo de 10 hábitos atingido');
+      return;
+    }
+
+    if (newHabit.start_date < todayKey) {
+      toast.error('A data inicial deve ser hoje ou futura');
+      return;
+    }
+
+    if (newHabit.end_date < newHabit.start_date) {
+      toast.error('A data final deve ser igual ou posterior à data inicial');
       return;
     }
 
@@ -68,8 +81,8 @@ export default function HabitManager() {
 
       if (!res.ok) throw new Error('Failed to create habit');
 
-      toast.success('Hábito criado!');
-      setNewHabit({ name: "", color: "#CD1C33", icon: "circle" });
+      toast.success('Objetivo criado!');
+      setNewHabit({ name: "", color: "#CD1C33", icon: "circle", start_date: todayKey, end_date: todayKey });
       setShowAddForm(false);
       loadHabits();
     } catch (error) {
@@ -79,7 +92,7 @@ export default function HabitManager() {
   };
 
   const handleDeleteHabit = async (habitId) => {
-    if (!window.confirm('Tem certeza? Isso apagará todos os registros deste hábito.')) {
+    if (!window.confirm('Tem certeza? Isso apagará todos os registros deste objetivo.')) {
       return;
     }
 
@@ -91,7 +104,7 @@ export default function HabitManager() {
 
       if (!res.ok) throw new Error('Failed to delete');
 
-      toast.success('Hábito removido');
+      toast.success('Objetivo removido');
       loadHabits();
     } catch (error) {
       console.error('Error deleting habit:', error);
@@ -149,7 +162,7 @@ export default function HabitManager() {
             className="w-full mb-8 p-8 border-2 border-dashed border-white/10 rounded-2xl hover:border-primary/30 transition-all flex items-center justify-center gap-3 text-slate-400 hover:text-white font-body bg-white/5 backdrop-blur-sm"
           >
             <Plus className="w-6 h-6" />
-            <span className="font-medium">Adicionar novo hábito</span>
+            <span className="font-medium">Adicionar novo objetivo</span>
           </motion.button>
         )}
 
@@ -163,14 +176,14 @@ export default function HabitManager() {
           >
             <h3 className="font-heading text-2xl font-medium text-white mb-6 flex items-center gap-2">
               <Plus className="w-6 h-6 text-primary" />
-              Novo Hábito
+              Novo Objetivo
             </h3>
             
             <div className="space-y-6">
               {/* Name Input */}
               <div>
                 <label className="block text-sm font-body font-medium text-slate-300 mb-3">
-                  Nome do hábito
+                  Nome do objetivo
                 </label>
                 <input
                   type="text"
@@ -183,11 +196,45 @@ export default function HabitManager() {
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-body font-medium text-slate-300 mb-3">
+                    Período (DE)
+                  </label>
+                  <input
+                    type="date"
+                    value={newHabit.start_date}
+                    min={todayKey}
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      setNewHabit({
+                        ...newHabit,
+                        start_date: nextStart,
+                        end_date: newHabit.end_date < nextStart ? nextStart : newHabit.end_date,
+                      });
+                    }}
+                    className="w-full px-5 py-4 bg-slate-950/50 border border-white/10 rounded-xl font-body text-white focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-body font-medium text-slate-300 mb-3">
+                    Período (ATÉ)
+                  </label>
+                  <input
+                    type="date"
+                    value={newHabit.end_date}
+                    min={newHabit.start_date}
+                    onChange={(e) => setNewHabit({ ...newHabit, end_date: e.target.value })}
+                    className="w-full px-5 py-4 bg-slate-950/50 border border-white/10 rounded-xl font-body text-white focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                  />
+                </div>
+              </div>
+
               {/* Color Picker */}
               <div>
                 <label className="block text-sm font-body font-medium text-slate-300 mb-3 flex items-center gap-2">
                   <Palette className="w-4 h-4" />
-                  Cor do hábito
+                  Cor do objetivo
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {PRESET_COLORS.map((color) => (
@@ -221,7 +268,7 @@ export default function HabitManager() {
                   whileTap={{ scale: 0.98 }}
                   className="flex-1 bg-primary text-primary-foreground px-8 py-4 rounded-full font-body font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
                 >
-                  Criar hábito
+                  Criar objetivo
                 </motion.button>
                 <motion.button
                   type="button"
@@ -229,7 +276,7 @@ export default function HabitManager() {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     setShowAddForm(false);
-                    setNewHabit({ name: "", color: "#CD1C33", icon: "circle" });
+                    setNewHabit({ name: "", color: "#CD1C33", icon: "circle", start_date: todayKey, end_date: todayKey });
                   }}
                   data-testid="cancel-add-habit"
                   className="px-8 py-4 border border-white/20 rounded-full font-body hover:bg-white/5 transition-all text-white"
@@ -246,7 +293,7 @@ export default function HabitManager() {
           {habits.length === 0 ? (
             <div className="text-center py-20 glass-card">
               <p className="text-slate-400 font-body text-lg">
-                Nenhum hábito criado ainda.
+                Nenhum objetivo criado ainda.
               </p>
             </div>
           ) : (
@@ -286,6 +333,9 @@ export default function HabitManager() {
                       />
                       <span className="text-sm text-slate-400">{habit.color}</span>
                     </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {habit.start_date} até {habit.end_date}
+                    </p>
                   </div>
 
                   <motion.button
@@ -294,7 +344,7 @@ export default function HabitManager() {
                     onClick={() => handleDeleteHabit(habit.habit_id)}
                     data-testid={`delete-habit-${habit.habit_id}`}
                     className="p-3 hover:bg-secondary/10 rounded-xl transition-all text-slate-400 hover:text-secondary"
-                    title="Remover hábito"
+                    title="Remover objetivo"
                   >
                     <Trash2 className="w-5 h-5" />
                   </motion.button>

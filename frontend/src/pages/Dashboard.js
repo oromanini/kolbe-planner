@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard, Target, Landmark } from "lucide-react";
@@ -22,6 +22,66 @@ export default function Dashboard() {
 
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
+
+
+  const today = useMemo(() => {
+    const value = new Date();
+    value.setHours(0, 0, 0, 0);
+    return value;
+  }, []);
+
+  const parseDate = (dateString) => {
+    const [yearPart, monthPart, dayPart] = dateString.split('-').map(Number);
+    return new Date(yearPart, monthPart - 1, dayPart);
+  };
+
+  const deadlineNotifications = useMemo(() => {
+    const items = [];
+
+    habits.forEach((habit) => {
+      if (!habit.start_date || !habit.end_date) {
+        return;
+      }
+
+      const startDate = parseDate(habit.start_date);
+      const endDate = parseDate(habit.end_date);
+
+      const msPerDay = 1000 * 60 * 60 * 24;
+      const daysRemaining = Math.floor((endDate - today) / msPerDay);
+
+      if (daysRemaining >= 1 && daysRemaining <= 3 && today >= startDate) {
+        items.push({
+          habitId: habit.habit_id,
+          tone: 'warning',
+          message: `Faltam ${daysRemaining} dias para concluir o objetivo ${habit.name}`,
+        });
+        return;
+      }
+
+      if (today > endDate) {
+        const periodCompletions = completions.filter((completion) => {
+          if (completion.habit_id !== habit.habit_id || !completion.completed) {
+            return false;
+          }
+          const completionDate = parseDate(completion.date);
+          return completionDate >= startDate && completionDate <= endDate;
+        });
+
+        const uniqueCompletedDays = new Set(periodCompletions.map((completion) => completion.date));
+        const requiredDays = Math.floor((endDate - startDate) / msPerDay) + 1;
+
+        if (uniqueCompletedDays.size < requiredDays) {
+          items.push({
+            habitId: habit.habit_id,
+            tone: 'danger',
+            message: `Você falhou ao cumprir o objetivo ${habit.name} no tempo estimado. Reprograme-se!`,
+          });
+        }
+      }
+    });
+
+    return items;
+  }, [habits, completions, today]);
 
   useEffect(() => {
     loadData();
@@ -88,16 +148,20 @@ export default function Dashboard() {
       });
 
       const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.detail || 'Não foi possível atualizar este objetivo');
+      }
+
       await loadData();
-      
+
       if (result.completed) {
-        toast.success(effectiveMode === 'kolbe' ? 'Persevere! Mais um passo na constância.' : 'Hábito marcado!', {
+        toast.success(effectiveMode === 'kolbe' ? 'Persevere! Mais um passo na constância.' : 'Objetivo marcado!', {
           duration: 2000,
         });
       }
     } catch (error) {
       console.error('Error toggling completion:', error);
-      toast.error('Erro ao atualizar');
+      toast.error(error.message || 'Erro ao atualizar');
     }
   };
 
@@ -145,7 +209,13 @@ export default function Dashboard() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-12 w-12 rounded-xl border border-white/10 p-1.5 bg-white/5" />
+            <div className="h-12 w-12 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
+              <img
+                src="/kp-logo.svg"
+                alt="Kolbe Planner"
+                className="h-full w-full object-contain"
+              />
+            </div>
             <div>
               <h1 className="font-heading text-2xl font-medium text-white" data-testid="dashboard-title">
                 Kolbe Planner
@@ -216,6 +286,19 @@ export default function Dashboard() {
             {dailyQuote && (
               <div className="mb-5 p-3 border border-white/10 rounded-xl bg-white/5 text-sm text-slate-300" data-testid="daily-quote">
                 <p className="line-clamp-2">"{dailyQuote.text}" — {dailyQuote.author}</p>
+              </div>
+            )}
+
+            {deadlineNotifications.length > 0 && (
+              <div className="mb-5 space-y-2" data-testid="deadline-notifications">
+                {deadlineNotifications.map((notification) => (
+                  <div
+                    key={`${notification.habitId}-${notification.message}`}
+                    className={`p-3 rounded-xl text-sm border ${notification.tone === 'danger' ? 'border-red-500/40 bg-red-500/10 text-red-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}
+                  >
+                    {notification.message}
+                  </div>
+                ))}
               </div>
             )}
 
