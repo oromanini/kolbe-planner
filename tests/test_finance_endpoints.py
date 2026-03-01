@@ -123,10 +123,16 @@ def run(coro):
 
 
 def test_methods_get_and_create(fake_backend):
-    assert run(server.get_methods()) == []
-    created = run(server.create_method(server.MethodCreate(name="PIX")))
-    assert created["name"] == "PIX"
-    assert len(fake_backend.financial_methods.docs) == 1
+    methods = run(server.get_methods())
+    assert [method["name"] for method in methods] == server.DEFAULT_FINANCIAL_METHODS
+
+    with pytest.raises(HTTPException) as duplicate:
+        run(server.create_method(server.MethodCreate(name="PIX")))
+    assert duplicate.value.status_code == 409
+
+    created = run(server.create_method(server.MethodCreate(name="Cartão corporativo")))
+    assert created["name"] == "Cartão corporativo"
+    assert len(fake_backend.financial_methods.docs) == len(server.DEFAULT_FINANCIAL_METHODS) + 1
 
 
 def test_categories_get_and_create_and_duplicate_conflict(fake_backend):

@@ -686,6 +686,42 @@ class SavingsCreate(BaseModel):
 class MethodCreate(BaseModel):
     name: str
 
+
+DEFAULT_FINANCIAL_METHODS = [
+    "pix",
+    "dinheiro",
+    "crédito a vista",
+    "crédito parcelado",
+    "debito",
+    "boleto",
+    "promissoria",
+    "crediario",
+    "wallet",
+    "outro",
+]
+
+
+def normalize_method_name(name: str) -> str:
+    return name.strip().casefold()
+
+
+async def ensure_default_financial_methods(user_id: str):
+    existing_methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0, "name": 1}).to_list(200)
+    existing_names = {normalize_method_name(method.get("name", "")) for method in existing_methods}
+
+    for name in DEFAULT_FINANCIAL_METHODS:
+        if normalize_method_name(name) in existing_names:
+            continue
+
+        await db.financial_methods.insert_one(
+            {
+                "method_id": f"method_{uuid.uuid4().hex[:12]}",
+                "user_id": user_id,
+                "name": name,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
 class CategoryCreate(BaseModel):
     name: str
     icon: str
@@ -704,6 +740,7 @@ async def get_methods(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+    await ensure_default_financial_methods(user.user_id)
     methods = await db.financial_methods.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
     return methods
 
@@ -714,6 +751,12 @@ async def create_method(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+
+    existing_methods = await db.financial_methods.find({"user_id": user.user_id}, {"_id": 0, "name": 1}).to_list(200)
+    method_exists = any(normalize_method_name(method.get("name", "")) == normalize_method_name(data.name) for method in existing_methods)
+    if method_exists:
+        raise HTTPException(status_code=409, detail="Method already exists")
+
     method = {
         "method_id": f"method_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
