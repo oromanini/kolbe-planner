@@ -163,7 +163,7 @@ export default function PlannerTipsAssistant() {
         className="group inline-flex items-center gap-2 rounded-full border border-amber-300/30 bg-slate-950/80 px-4 py-3 text-sm font-medium text-slate-100 shadow-[0_0_22px_rgba(212,175,55,0.18)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:border-amber-200/50 hover:shadow-[0_0_26px_rgba(212,175,55,0.25)]"
       >
         <Bot className="h-4 w-4 text-amber-300" />
-        <span>Coach</span>
+        <span>Kolbe</span>
         <ChevronDown
           className={`h-4 w-4 text-slate-300 transition-transform ${isOpen ? "rotate-180" : "rotate-0"}`}
         />
