@@ -66,11 +66,13 @@ export default function LandingPage() {
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5 bg-background-paper/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img
-              src="/kp-logo.svg"
-              alt="Kolbe Planner"
-              className="h-10 w-auto object-contain"
-            />
+            <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
+              <img
+                src="/kp-logo.svg"
+                alt="Kolbe Planner"
+                className="h-full w-full object-contain"
+              />
+            </div>
             <span className="font-heading text-xl font-medium text-white">
               Kolbe Planner
             </span>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Users, Target, CheckCircle, Shield } from "lucide-react";
+import { ArrowLeft, Users, Target, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -57,10 +57,14 @@ export default function AdminDashboard() {
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="font-heading text-2xl font-medium text-white flex items-center gap-2" data-testid="admin-title">
-            <Shield className="w-6 h-6 text-primary" />
-            Administração
-          </h1>
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
+              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
+            </div>
+            <h1 className="font-heading text-2xl font-medium text-white" data-testid="admin-title">
+              Administração
+            </h1>
+          </div>
         </div>
       </header>
 

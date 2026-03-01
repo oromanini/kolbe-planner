@@ -58,6 +58,9 @@ export default function SettingsPage() {
           <button onClick={() => navigate('/dashboard')} className="p-2.5 hover:bg-white/5 rounded-lg text-slate-400 hover:text-white">
             <ArrowLeft className="w-5 h-5" />
           </button>
+          <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
+            <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
+          </div>
           <h1 className="font-heading text-2xl">Configurações</h1>
         </div>
       </header>
