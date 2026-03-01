@@ -19,10 +19,10 @@ export default function Dashboard() {
   const [showTutorial, setShowTutorial] = useState(false);
   const [dailyQuote, setDailyQuote] = useState(null);
   const [effectiveMode, setEffectiveMode] = useState("neutral");
+  const [calendarView, setCalendarView] = useState("month");
 
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
-
 
   const today = useMemo(() => {
     const value = new Date();
@@ -90,7 +90,7 @@ export default function Dashboard() {
   const loadData = async () => {
     try {
       setLoading(true);
-      
+
       const userRes = await fetch(`${API}/auth/me`, { credentials: 'include' });
       const userData = await userRes.json();
       setUser(userData);
@@ -104,20 +104,18 @@ export default function Dashboard() {
 
       const habitsRes = await fetch(`${API}/habits`, { credentials: 'include' });
       const habitsData = await habitsRes.json();
-      
+
       if (habitsData.length === 0 && !userData.onboarding_completed) {
         setShowTutorial(true);
       }
-      
+
       setHabits(habitsData);
 
-      const completionsRes = await fetch(
-        `${API}/completions?year=${currentYear}&month=${currentMonth}`,
-        { credentials: 'include' }
-      );
+      const completionsRes = await fetch(`${API}/completions?year=${currentYear}&month=${currentMonth}`, {
+        credentials: 'include',
+      });
       const completionsData = await completionsRes.json();
       setCompletions(completionsData);
-
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Erro ao carregar dados');
@@ -144,7 +142,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ habit_id: habitId, date })
+        body: JSON.stringify({ habit_id: habitId, date }),
       });
 
       const result = await res.json();
@@ -169,7 +167,7 @@ export default function Dashboard() {
     try {
       await fetch(`${API}/auth/logout`, {
         method: 'POST',
-        credentials: 'include'
+        credentials: 'include',
       });
       navigate('/');
     } catch (error) {
@@ -180,7 +178,7 @@ export default function Dashboard() {
   const handleCompleteOnboarding = async () => {
     await fetch(`${API}/auth/complete-onboarding`, {
       method: 'POST',
-      credentials: 'include'
+      credentials: 'include',
     });
     setShowTutorial(false);
     loadData();
@@ -188,33 +186,28 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-5 px-6 text-center">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
           className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full"
-        ></motion.div>
+        />
+        <p className="text-slate-300 font-body max-w-md">Montando seu planner e separando os próximos passos...</p>
       </div>
     );
   }
 
   const monthNames = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
   ];
 
   return (
     <div className="min-h-screen bg-background text-white">
-      {/* Header */}
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
-              <img
-                src="/kp-logo.svg"
-                alt="Kolbe Planner"
-                className="h-full w-full object-contain"
-              />
+              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
             </div>
             <div>
               <h1 className="font-heading text-2xl font-medium text-white" data-testid="dashboard-title">
@@ -244,8 +237,17 @@ export default function Dashboard() {
               Planner Financeiro
             </button>
           </div>
-          
+
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/habits')}
+              data-testid="quick-goals-button"
+              className="px-3 py-2.5 hover:bg-white/5 rounded-lg transition-all text-slate-300 hover:text-white text-sm font-medium"
+              title="Ir para metas"
+            >
+              Metas
+            </button>
+
             <button
               onClick={() => navigate('/settings')}
               data-testid="manage-habits-button"
@@ -254,7 +256,7 @@ export default function Dashboard() {
             >
               <Settings className="w-5 h-5" />
             </button>
-            
+
             {user?.is_admin && (
               <button
                 onClick={() => navigate('/admin')}
@@ -265,7 +267,7 @@ export default function Dashboard() {
                 <LayoutDashboard className="w-5 h-5" />
               </button>
             )}
-            
+
             <button
               onClick={handleLogout}
               data-testid="logout-button"
@@ -278,10 +280,8 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid lg:grid-cols-7 gap-8">
-          {/* Calendar - Main Area */}
           <div className="lg:col-span-5">
             {dailyQuote && (
               <div className="mb-5 p-3 border border-white/10 rounded-xl bg-white/5 text-sm text-slate-300" data-testid="daily-quote">
@@ -302,12 +302,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Month Navigation */}
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center justify-between mb-8"
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between mb-8 gap-4">
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -317,14 +312,29 @@ export default function Dashboard() {
               >
                 <ChevronLeft className="w-6 h-6" />
               </motion.button>
-              
-              <h2 
-                className="font-heading text-4xl sm:text-5xl font-medium text-white tracking-tight"
-                data-testid="current-month-title"
-              >
-                {monthNames[currentMonth - 1]} <span className="text-primary">{currentYear}</span>
-              </h2>
-              
+
+              <div className="flex flex-col items-center gap-3">
+                <h2 className="font-heading text-4xl sm:text-5xl font-medium text-white tracking-tight" data-testid="current-month-title">
+                  {monthNames[currentMonth - 1]} <span className="text-primary">{currentYear}</span>
+                </h2>
+                <div className="flex items-center gap-2 p-1 border border-white/10 rounded-xl bg-white/5">
+                  <button
+                    type="button"
+                    onClick={() => setCalendarView('week')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition-all ${calendarView === 'week' ? 'bg-primary/20 text-primary' : 'text-slate-300 hover:text-white'}`}
+                  >
+                    Semana
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCalendarView('month')}
+                    className={`px-3 py-1.5 rounded-lg text-sm transition-all ${calendarView === 'month' ? 'bg-primary/20 text-primary' : 'text-slate-300 hover:text-white'}`}
+                  >
+                    Mês
+                  </button>
+                </div>
+              </div>
+
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -336,7 +346,6 @@ export default function Dashboard() {
               </motion.button>
             </motion.div>
 
-            {/* Calendar Grid */}
             <CalendarGrid
               year={currentYear}
               month={currentMonth}
@@ -344,22 +353,17 @@ export default function Dashboard() {
               completions={completions}
               onToggleCompletion={handleToggleCompletion}
               onCreateGoal={() => navigate('/habits')}
+              viewMode={calendarView}
+              referenceDay={currentDate.getDate()}
             />
           </div>
 
-          {/* Sidebar - Stats & Habits */}
           <div className="lg:col-span-2">
-            <ProgressStats
-              year={currentYear}
-              month={currentMonth}
-              habits={habits}
-              completions={completions}
-            />
+            <ProgressStats year={currentYear} month={currentMonth} habits={habits} completions={completions} />
           </div>
         </div>
       </main>
 
-      {/* Tutorial Modal */}
       {showTutorial && (
         <TutorialModal
           onComplete={handleCompleteOnboarding}

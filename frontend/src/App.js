@@ -50,8 +50,9 @@ function ProtectedRoute({ children }) {
 
   if (isAuthenticated === null) {
     return (
-      <div className="min-h-screen bg-paper flex items-center justify-center">
+      <div className="min-h-screen bg-paper flex flex-col items-center justify-center gap-4 px-6 text-center">
         <div className="w-16 h-16 border-4 border-navy border-t-transparent rounded-full animate-spin"></div>
+        <p className="text-slate-300 font-body max-w-md">Conferindo seu acesso e preparando a próxima tela...</p>
       </div>
     );
   }
