@@ -61,6 +61,11 @@ export default function HabitManager() {
       return;
     }
 
+    if (!newHabit.start_date || !newHabit.end_date) {
+      toast.error('Preencha as datas de início e fim do objetivo');
+      return;
+    }
+
     if (newHabit.start_date < todayKey) {
       toast.error('A data inicial deve ser hoje ou futura');
       return;
@@ -76,7 +81,13 @@ export default function HabitManager() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(newHabit)
+        body: JSON.stringify({
+          name: newHabit.name.trim(),
+          color: newHabit.color,
+          icon: newHabit.icon,
+          start_date: newHabit.start_date,
+          end_date: newHabit.end_date,
+        })
       });
 
       if (!res.ok) throw new Error('Failed to create habit');
