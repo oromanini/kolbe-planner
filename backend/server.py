@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 import os
 import logging
 from pathlib import Path
@@ -739,6 +740,14 @@ async def create_category(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+
+    existing = await db.financial_categories.find_one(
+        {"user_id": user.user_id, "name": data.name},
+        {"_id": 0, "category_id": 1}
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Category already exists")
+
     category = {
         "category_id": f"cat_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
@@ -746,7 +755,10 @@ async def create_category(
         "icon": data.icon,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    await db.financial_categories.insert_one(category)
+    try:
+        await db.financial_categories.insert_one(category)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Category already exists")
     return category
 
 @api_router.put("/finance/categories/{category_id}")
@@ -764,10 +776,25 @@ async def update_category(
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    await db.financial_categories.update_one(
-        {"category_id": category_id, "user_id": user.user_id},
-        {"$set": {"name": data.name, "icon": data.icon}}
-    )
+    if existing.get("name") != data.name:
+        duplicate = await db.financial_categories.find_one(
+            {
+                "user_id": user.user_id,
+                "name": data.name,
+                "category_id": {"$ne": category_id}
+            },
+            {"_id": 0, "category_id": 1}
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Category already exists")
+
+    try:
+        await db.financial_categories.update_one(
+            {"category_id": category_id, "user_id": user.user_id},
+            {"$set": {"name": data.name, "icon": data.icon}}
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail="Category already exists")
 
     if existing.get("name") != data.name:
         await db.expenses.update_many(
