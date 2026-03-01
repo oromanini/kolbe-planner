@@ -22,6 +22,7 @@ export default function HabitManager() {
   const [habits, setHabits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [isCreatingHabit, setIsCreatingHabit] = useState(false);
   const todayKey = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
     .toISOString()
     .split('T')[0];
@@ -52,6 +53,10 @@ export default function HabitManager() {
 
   const handleAddHabit = async (e) => {
     e.preventDefault();
+
+    if (isCreatingHabit) {
+      return;
+    }
     
     if (!newHabit.name.trim()) {
       toast.error('Digite um nome para o objetivo');
@@ -79,6 +84,7 @@ export default function HabitManager() {
     }
 
     try {
+      setIsCreatingHabit(true);
       const res = await fetch(`${API}/habits`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,10 +103,12 @@ export default function HabitManager() {
       toast.success('Objetivo criado!');
       setNewHabit({ name: "", color: "#CD1C33", icon: "circle", start_date: todayKey, end_date: todayKey });
       setShowAddForm(false);
-      loadHabits();
+      await loadHabits();
     } catch (error) {
       console.error('Error creating habit:', error);
       toast.error('Erro ao criar hábito');
+    } finally {
+      setIsCreatingHabit(false);
     }
   };
 
@@ -279,9 +287,21 @@ export default function HabitManager() {
                   data-testid="create-habit-submit"
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  className="flex-1 bg-primary text-primary-foreground px-8 py-4 rounded-full font-body font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20"
+                  disabled={isCreatingHabit}
+                  className="flex-1 bg-primary text-primary-foreground px-8 py-4 rounded-full font-body font-bold hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  Criar objetivo
+                  {isCreatingHabit ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <motion.span
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+                        className="w-4 h-4 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full"
+                      />
+                      Cadastrando...
+                    </span>
+                  ) : (
+                    'Criar objetivo'
+                  )}
                 </motion.button>
                 <motion.button
                   type="button"
