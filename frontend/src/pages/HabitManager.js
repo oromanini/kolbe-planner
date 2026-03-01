@@ -22,7 +22,9 @@ export default function HabitManager() {
   const [habits, setHabits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
-  const todayKey = new Date().toISOString().split('T')[0];
+  const todayKey = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    .toISOString()
+    .split('T')[0];
   const [newHabit, setNewHabit] = useState({
     name: "",
     color: "#CD1C33",
