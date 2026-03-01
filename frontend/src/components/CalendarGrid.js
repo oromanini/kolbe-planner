@@ -1,24 +1,24 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check } from "lucide-react";
 import { Dialog, DialogContent } from "./ui/dialog";
 
-export default function CalendarGrid({ year, month, habits, completions, onToggleCompletion, onCreateGoal }) {
+export default function CalendarGrid({
+  year,
+  month,
+  habits,
+  completions,
+  onToggleCompletion,
+  onCreateGoal,
+  viewMode = "month",
+  referenceDay = 1,
+}) {
   const [selectedDay, setSelectedDay] = useState(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfMonth = new Date(year, month - 1, 1).getDay();
-  
-  const calendarDays = [];
-  
-  for (let i = 0; i < firstDayOfMonth; i++) {
-    calendarDays.push(null);
-  }
-  
-  for (let day = 1; day <= daysInMonth; day++) {
-    calendarDays.push(day);
-  }
+
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -45,11 +45,6 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
 
   const canToggleAnyHabitOnDay = (day) => !isPastDay(day) && habits.some((habit) => isHabitInPeriod(habit, day));
 
-  const getCompletionsForDay = (day) => {
-    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    return completions.filter(c => c.date === dateStr);
-  };
-
   const getDayProgress = (day) => {
     const activeHabits = habits.filter((habit) => isHabitInPeriod(habit, day));
     if (activeHabits.length === 0) return { completed: 0, total: 0, percentage: 0 };
@@ -59,7 +54,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
     return {
       completed: completedCount,
       total: activeHabits.length,
-      percentage: (completedCount / activeHabits.length) * 100
+      percentage: (completedCount / activeHabits.length) * 100,
     };
   };
 
@@ -76,23 +71,48 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
 
   const isHabitCompletedOnDay = (habitId, day) => {
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const completion = completions.find(c => c.habit_id === habitId && c.date === dateStr);
+    const completion = completions.find((c) => c.habit_id === habitId && c.date === dateStr);
     return completion?.completed || false;
   };
 
+  const visibleDays = useMemo(() => {
+    if (viewMode === "month") {
+      const monthDays = [];
+      for (let i = 0; i < firstDayOfMonth; i++) monthDays.push(null);
+      for (let day = 1; day <= daysInMonth; day++) monthDays.push(day);
+      return monthDays;
+    }
+
+    const safeReferenceDay = Math.max(1, Math.min(referenceDay || 1, daysInMonth));
+    const refDate = new Date(year, month - 1, safeReferenceDay);
+    const dayOfWeek = refDate.getDay();
+    const weekStart = new Date(refDate);
+    weekStart.setDate(refDate.getDate() - dayOfWeek);
+
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + index);
+
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1) {
+        return null;
+      }
+
+      return date.getDate();
+    });
+  }, [viewMode, referenceDay, daysInMonth, firstDayOfMonth, year, month]);
+
   return (
     <>
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.4 }}
         className="glass-card overflow-hidden"
       >
-        {/* Week days header */}
         <div className="grid grid-cols-7 bg-background-paper border-b border-white/5">
           {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((day, i) => (
-            <div 
-              key={i} 
+            <div
+              key={i}
               className="py-4 text-center text-xs font-body font-medium text-slate-500 uppercase tracking-widest"
             >
               {day}
@@ -100,9 +120,8 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
           ))}
         </div>
 
-        {/* Calendar grid */}
         <div className="grid grid-cols-7 gap-px bg-white/5" data-testid="calendar-grid">
-          {calendarDays.map((day, index) => {
+          {visibleDays.map((day, index) => {
             if (!day) {
               return <div key={`empty-${index}`} className="bg-background-paper aspect-square"></div>;
             }
@@ -111,10 +130,11 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
             const isComplete = progress.percentage === 100 && progress.total > 0;
             const isPartial = progress.percentage > 0 && progress.percentage < 100;
             const dayLocked = !canToggleAnyHabitOnDay(day);
+            const activeHabits = habits.filter((habit) => isHabitInPeriod(habit, day));
 
             return (
               <motion.button
-                key={day}
+                key={`${viewMode}-${day}`}
                 data-testid={`calendar-day-${day}`}
                 onClick={() => handleDayClick(day)}
                 whileHover={dayLocked ? undefined : { scale: 1.05 }}
@@ -126,50 +146,35 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                   ${dayLocked ? 'opacity-45 cursor-not-allowed' : 'hover:bg-background-subtle cursor-pointer'}
                 `}
               >
-                {/* Day number */}
-                <div className={`
-                  text-xs font-body font-medium mb-1.5 text-right
-                  ${isComplete ? 'text-primary font-bold' : 'text-slate-400'}
-                `}>
+                <div className={`text-xs font-body font-medium mb-1.5 text-right ${isComplete ? 'text-primary font-bold' : 'text-slate-400'}`}>
                   {day}
                 </div>
 
-                {/* Habit list with names */}
                 <div className="space-y-0.5 text-left overflow-hidden">
-                  {habits.filter((habit) => isHabitInPeriod(habit, day)).slice(0, 4).map((habit) => {
+                  {activeHabits.slice(0, 4).map((habit) => {
                     const completed = isHabitCompletedOnDay(habit.habit_id, day);
                     return (
-                      <div
-                        key={habit.habit_id}
-                        className="flex items-center gap-1 text-[10px] leading-tight"
-                      >
+                      <div key={habit.habit_id} className="flex items-center gap-1 text-[10px] leading-tight">
                         <div
                           className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                           style={{
                             backgroundColor: completed ? habit.color : 'rgba(255,255,255,0.15)',
-                            boxShadow: completed ? `0 0 6px ${habit.color}` : 'none'
+                            boxShadow: completed ? `0 0 6px ${habit.color}` : 'none',
                           }}
                         />
-                        <span className={`truncate ${completed ? 'text-slate-300' : 'text-slate-600'}`}>
-                          {habit.name}
-                        </span>
+                        <span className={`truncate ${completed ? 'text-slate-300' : 'text-slate-600'}`}>{habit.name}</span>
                       </div>
                     );
                   })}
-                  {habits.filter((habit) => isHabitInPeriod(habit, day)).length > 4 && (
-                    <div className="text-[9px] text-slate-600 text-center">
-                      +{habits.filter((habit) => isHabitInPeriod(habit, day)).length - 4}
-                    </div>
-                  )}
+                  {activeHabits.length > 4 && <div className="text-[9px] text-slate-600 text-center">+{activeHabits.length - 4}</div>}
                 </div>
 
-                {/* Victory glow */}
                 {isComplete && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     className="absolute inset-0 border-2 border-primary/50 pointer-events-none rounded-sm"
-                  ></motion.div>
+                  />
                 )}
               </motion.button>
             );
@@ -177,7 +182,6 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
         </div>
       </motion.div>
 
-      {/* Day Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-md glass-card-heavy border-white/10">
           <div className="space-y-4">
@@ -189,9 +193,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
 
             {habits.filter((habit) => selectedDay && isHabitInPeriod(habit, selectedDay)).length === 0 ? (
               <div className="text-center py-10 space-y-4">
-                <p className="text-slate-400 font-body">
-                  Nenhum objetivo ativo nesta data.
-                </p>
+                <p className="text-slate-400 font-body">Nenhum objetivo ativo nesta data.</p>
                 <button
                   onClick={() => {
                     setIsDialogOpen(false);
@@ -220,10 +222,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                         whileTap={{ scale: 0.98 }}
                         className={`
                           w-full p-4 rounded-xl border-2 transition-all flex items-center gap-4
-                          ${completed 
-                            ? 'border-primary/50 bg-primary/10 shadow-glow' 
-                            : 'border-white/10 hover:border-white/20 bg-white/5'
-                          }
+                          ${completed ? 'border-primary/50 bg-primary/10 shadow-glow' : 'border-white/10 hover:border-white/20 bg-white/5'}
                         `}
                       >
                         <div
@@ -231,7 +230,7 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                           style={{
                             backgroundColor: completed ? habit.color : 'transparent',
                             border: completed ? 'none' : `2px solid ${habit.color}`,
-                            boxShadow: completed ? `0 0 20px ${habit.color}` : 'none'
+                            boxShadow: completed ? `0 0 20px ${habit.color}` : 'none',
                           }}
                         >
                           {completed && (
@@ -244,10 +243,8 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
                             </motion.div>
                           )}
                         </div>
-                        
-                        <span className="font-body font-medium text-white flex-1 text-left">
-                          {habit.name}
-                        </span>
+
+                        <span className="font-body font-medium text-white flex-1 text-left">{habit.name}</span>
                       </motion.button>
                     );
                   })}
