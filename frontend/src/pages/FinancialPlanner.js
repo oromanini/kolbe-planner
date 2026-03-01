@@ -415,6 +415,19 @@ export default function FinancialPlanner() {
                   required
                 />
                 <select
+                  value={newExpense.method_id}
+                  onChange={(e) => setNewExpense({ ...newExpense, method_id: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+                  required
+                >
+                  <option value="">Selecione um método de pagamento</option>
+                  {methods.map((method) => (
+                    <option key={method.method_id} value={method.method_id}>
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+                <select
                   value={newExpense.category}
                   onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
                   className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
