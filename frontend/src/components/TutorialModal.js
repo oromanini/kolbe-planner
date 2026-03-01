@@ -8,11 +8,22 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 export default function TutorialModal({ onComplete, onClose, kolbeMode = false }) {
   const [step, setStep] = useState(1);
 
+  const today = new Date();
+  const todayKey = today.toISOString().split('T')[0];
+  const defaultEndDate = new Date(today);
+  defaultEndDate.setDate(defaultEndDate.getDate() + 29);
+  const defaultEndDateKey = defaultEndDate.toISOString().split('T')[0];
+
   const handleInitializeDefaults = async () => {
     try {
       await fetch(`${API}/habits/initialize-defaults`, {
         method: 'POST',
-        credentials: 'include'
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          start_date: todayKey,
+          end_date: defaultEndDateKey,
+        }),
       });
       setStep(2);
     } catch (error) {

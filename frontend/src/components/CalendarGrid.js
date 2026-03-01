@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { Dialog, DialogContent } from "./ui/dialog";
 
 export default function CalendarGrid({ year, month, habits, completions, onToggleCompletion, onCreateGoal }) {
@@ -185,13 +185,6 @@ export default function CalendarGrid({ year, month, habits, completions, onToggl
               <h3 className="font-heading text-3xl font-medium text-white" data-testid="day-dialog-title">
                 Dia <span className="text-primary">{selectedDay}</span>
               </h3>
-              <button
-                onClick={() => setIsDialogOpen(false)}
-                data-testid="close-day-dialog"
-                className="p-2 hover:bg-white/5 rounded-lg transition-colors text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
             </div>
 
             {habits.filter((habit) => selectedDay && isHabitInPeriod(habit, selectedDay)).length === 0 ? (
