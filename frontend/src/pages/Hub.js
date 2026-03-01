@@ -39,8 +39,8 @@ export default function Hub() {
       <header className="border-b border-white/5 bg-background-paper/50 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center font-heading text-primary">
-              K
+            <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
+              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
             </div>
             <span className="font-heading text-xl font-medium text-white">Kolbe Planner</span>
           </div>
