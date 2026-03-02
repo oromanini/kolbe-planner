@@ -26,8 +26,7 @@ import {
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { toast } from "sonner";
-
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+import { apiRequest, checkApiHealth } from "@/lib/api";
 
 const CATEGORY_ICONS = {
   shoppingBag: ShoppingBag,
@@ -115,7 +114,17 @@ export default function FinancialPlanner() {
     setIsLoadingCategories(true);
     setIsLoadingExpenses(true);
 
-    const loadCategories = fetch(`${API}/finance/categories`, { credentials: "include" })
+    try {
+      await checkApiHealth();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Serviço indisponível no momento"));
+      setIsLoadingFinanceData(false);
+      setIsLoadingCategories(false);
+      setIsLoadingExpenses(false);
+      return;
+    }
+
+    const loadCategories = apiRequest(`/finance/categories`)
       .then(async (response) => {
         if (!response.ok) {
           const errorPayload = await response.json().catch(() => null);
@@ -129,7 +138,7 @@ export default function FinancialPlanner() {
       })
       .finally(() => setIsLoadingCategories(false));
 
-    const loadExpenses = fetch(`${API}/finance/expenses?month=${currentMonth}`, { credentials: "include" })
+    const loadExpenses = apiRequest(`/finance/expenses?month=${currentMonth}`)
       .then(async (response) => {
         if (!response.ok) {
           const errorPayload = await response.json().catch(() => null);
@@ -144,10 +153,10 @@ export default function FinancialPlanner() {
       .finally(() => setIsLoadingExpenses(false));
 
     const loadFinanceOverview = Promise.all([
-      fetch(`${API}/finance/summary?month=${currentMonth}`, { credentials: "include" }),
-      fetch(`${API}/finance/incomes?month=${currentMonth}`, { credentials: "include" }),
-      fetch(`${API}/finance/savings`, { credentials: "include" }),
-      fetch(`${API}/finance/methods`, { credentials: "include" }),
+      apiRequest(`/finance/summary?month=${currentMonth}`),
+      apiRequest(`/finance/incomes?month=${currentMonth}`),
+      apiRequest(`/finance/savings`),
+      apiRequest(`/finance/methods`),
     ])
       .then(async ([summaryRes, incomesRes, savingsRes, methodsRes]) => {
         const responses = [summaryRes, incomesRes, savingsRes, methodsRes];
@@ -185,12 +194,11 @@ export default function FinancialPlanner() {
 
     setIsSubmittingExpense(true);
     try {
-      const response = await fetch(
-        isEditing ? `${API}/finance/expenses/${editingExpenseId}` : `${API}/finance/expenses`,
+      const response = await apiRequest(
+        isEditing ? `/finance/expenses/${editingExpenseId}` : `/finance/expenses`,
         {
           method: isEditing ? "PUT" : "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({ ...newExpense, month: currentMonth }),
         },
       );
@@ -243,9 +251,8 @@ export default function FinancialPlanner() {
     if (!expenseToDelete) return;
 
     try {
-      const response = await fetch(`${API}/finance/expenses/${expenseToDelete.expense_id}`, {
+      const response = await apiRequest(`/finance/expenses/${expenseToDelete.expense_id}`, {
         method: "DELETE",
-        credentials: "include",
       });
 
       if (!response.ok) {
@@ -269,10 +276,9 @@ export default function FinancialPlanner() {
   const handleAddIncome = async (e) => {
     e.preventDefault();
     try {
-      await fetch(`${API}/finance/incomes`, {
+      await apiRequest(`/finance/incomes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ ...newIncome, month: currentMonth }),
       });
       toast.success("Entrada adicionada");
@@ -294,15 +300,14 @@ export default function FinancialPlanner() {
     }
 
     const isEditing = Boolean(editingCategoryId);
-    const endpoint = isEditing ? `${API}/finance/categories/${editingCategoryId}` : `${API}/finance/categories`;
+    const endpoint = isEditing ? `/finance/categories/${editingCategoryId}` : `/finance/categories`;
     const method = isEditing ? "PUT" : "POST";
 
     setIsSubmittingCategory(true);
     try {
-      const response = await fetch(endpoint, {
+      const response = await apiRequest(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ ...newCategory, name: newCategory.name.trim() }),
       });
 
@@ -339,9 +344,8 @@ export default function FinancialPlanner() {
 
   const requestCategoryDelete = async (category) => {
     try {
-      const response = await fetch(`${API}/finance/categories/${category.category_id}`, {
+      const response = await apiRequest(`/finance/categories/${category.category_id}`, {
         method: "DELETE",
-        credentials: "include",
       });
 
       if (response.status === 409) {
@@ -355,6 +359,7 @@ export default function FinancialPlanner() {
       }
 
       toast.success("Categoria excluída");
+      setCategories((prev) => prev.filter((item) => item.category_id !== category.category_id));
       loadData();
     } catch (error) {
       toast.error("Erro ao excluir categoria");
@@ -365,9 +370,8 @@ export default function FinancialPlanner() {
     if (!categoryToDelete) return;
 
     try {
-      const response = await fetch(`${API}/finance/categories/${categoryToDelete.category_id}?force=true`, {
+      const response = await apiRequest(`/finance/categories/${categoryToDelete.category_id}?force=true`, {
         method: "DELETE",
-        credentials: "include",
       });
 
       if (!response.ok) {
@@ -375,6 +379,8 @@ export default function FinancialPlanner() {
       }
 
       toast.success("Categoria e itens associados excluídos");
+      setCategories((prev) => prev.filter((item) => item.category_id !== categoryToDelete.category_id));
+      setExpenses((prev) => prev.filter((expense) => expense.category !== categoryToDelete.name));
       setCategoryToDelete(null);
       loadData();
     } catch (error) {

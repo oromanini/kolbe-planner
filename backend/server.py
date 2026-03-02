@@ -1511,6 +1511,28 @@ async def admin_import_seed_quotes(
     return await admin_import_quotes(payload, False, session_token, authorization)
 
 
+@api_router.get("/health")
+async def health_check():
+    timestamp = datetime.now(timezone.utc).isoformat()
+    checks = {"mongo": "ok", "collections": "ok"}
+
+    try:
+        await db.command("ping")
+    except Exception as exc:
+        checks["mongo"] = f"error: {exc}"
+        raise HTTPException(status_code=503, detail={"status": "degraded", "timestamp": timestamp, "checks": checks})
+
+    try:
+        await db.financial_categories.estimated_document_count()
+        await db.expenses.estimated_document_count()
+        await db.financial_methods.estimated_document_count()
+    except Exception as exc:
+        checks["collections"] = f"error: {exc}"
+        raise HTTPException(status_code=503, detail={"status": "degraded", "timestamp": timestamp, "checks": checks})
+
+    return {"status": "ok", "timestamp": timestamp, "checks": checks}
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
