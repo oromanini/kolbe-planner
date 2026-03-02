@@ -35,6 +35,7 @@ export default function HabitManager() {
     icon: "circle",
     start_date: todayKey,
     end_date: todayKey,
+    frequency: "daily",
   };
 
   const [newHabit, setNewHabit] = useState(emptyHabit);
@@ -102,6 +103,7 @@ export default function HabitManager() {
           icon: newHabit.icon,
           start_date: newHabit.start_date,
           end_date: newHabit.end_date,
+          frequency: newHabit.frequency,
         }),
       });
 
@@ -127,6 +129,7 @@ export default function HabitManager() {
       icon: habit.icon || "circle",
       start_date: habit.start_date,
       end_date: habit.end_date,
+      frequency: habit.frequency || "daily",
     });
     setShowAddForm(false);
   };
@@ -147,6 +150,7 @@ export default function HabitManager() {
           icon: newHabit.icon,
           start_date: newHabit.start_date,
           end_date: newHabit.end_date,
+          frequency: newHabit.frequency,
         }),
       });
 
@@ -308,6 +312,26 @@ export default function HabitManager() {
               </div>
 
               <div>
+                <label className="block text-sm font-body font-medium text-slate-300 mb-3">Frequência</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setNewHabit({ ...newHabit, frequency: "daily" })}
+                    className={`px-4 py-3 rounded-xl border text-left transition-all ${newHabit.frequency === "daily" ? "border-primary/60 bg-primary/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}
+                  >
+                    Todos os dias
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewHabit({ ...newHabit, frequency: "weekdays" })}
+                    className={`px-4 py-3 rounded-xl border text-left transition-all ${newHabit.frequency === "weekdays" ? "border-primary/60 bg-primary/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}
+                  >
+                    Apenas dias úteis
+                  </button>
+                </div>
+              </div>
+
+              <div>
                 <label className="block text-sm font-body font-medium text-slate-300 mb-3 flex items-center gap-2">
                   <Palette className="w-4 h-4" />
                   Cor do objetivo
@@ -407,6 +431,9 @@ export default function HabitManager() {
                     </div>
                     <p className="text-xs text-slate-500 mt-1">
                       {habit.start_date} até {habit.end_date}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {habit.frequency === "weekdays" ? "Frequência: dias úteis" : "Frequência: todos os dias"}
                     </p>
                   </div>
 

@@ -71,6 +71,7 @@ class Habit(BaseModel):
     icon: str
     start_date: str  # YYYY-MM-DD format
     end_date: str  # YYYY-MM-DD format
+    frequency: Literal["daily", "weekdays"] = "daily"
     order: int
     created_at: datetime
 
@@ -100,6 +101,7 @@ class HabitCreate(BaseModel):
     icon: str = "circle"
     start_date: str
     end_date: str
+    frequency: Literal["daily", "weekdays"] = "daily"
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
@@ -107,6 +109,7 @@ class HabitUpdate(BaseModel):
     icon: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    frequency: Optional[Literal["daily", "weekdays"]] = None
     order: Optional[int] = None
 
 class CompletionToggle(BaseModel):
@@ -234,6 +237,13 @@ def ensure_period_is_valid(start_date: str, end_date: str, min_date: Optional[st
         minimum = parse_day_key(min_date)
         if start < minimum:
             raise HTTPException(status_code=400, detail="Start date cannot be in the past")
+
+
+def is_habit_scheduled_for_date(habit: dict, selected_date: datetime) -> bool:
+    frequency = habit.get("frequency") or "daily"
+    if frequency == "weekdays":
+        return selected_date.weekday() < 5
+    return True
 
 
 async def require_admin_user(
@@ -479,6 +489,8 @@ async def get_habits(
             habit['start_date'] = start_date
         if not habit.get('end_date'):
             habit['end_date'] = start_date
+        if not habit.get('frequency'):
+            habit['frequency'] = 'daily'
     
     return habits
 
@@ -517,6 +529,7 @@ async def create_habit(
         icon=habit_data.icon,
         start_date=habit_data.start_date,
         end_date=habit_data.end_date,
+        frequency=habit_data.frequency,
         order=next_order,
         created_at=datetime.now(timezone.utc)
     )
@@ -568,6 +581,8 @@ async def update_habit(
         updated_habit['start_date'] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if not updated_habit.get('end_date'):
         updated_habit['end_date'] = updated_habit['start_date']
+    if not updated_habit.get('frequency'):
+        updated_habit['frequency'] = 'daily'
 
     return Habit(**updated_habit)
 
@@ -1119,6 +1134,7 @@ async def get_summary(
             "icon": h["icon"],
             "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "frequency": "daily",
             "order": i,
             "created_at": datetime.now(timezone.utc).isoformat()
         }
@@ -1184,8 +1200,8 @@ async def toggle_completion(
     user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
     today_key = get_local_day_key(get_user_timezone(user_doc or {}))
     selected_date = parse_day_key(data.date)
-    if selected_date < parse_day_key(today_key):
-        raise HTTPException(status_code=400, detail="Past dates are locked. You can only update today or future dates")
+    if data.date != today_key:
+        raise HTTPException(status_code=400, detail="Você só pode concluir objetivos no dia de hoje")
 
     habit_start = habit.get("start_date")
     habit_end = habit.get("end_date")
@@ -1193,6 +1209,8 @@ async def toggle_completion(
         raise HTTPException(status_code=400, detail="Date is before this objective period")
     if habit_end and selected_date > parse_day_key(habit_end):
         raise HTTPException(status_code=400, detail="Date is after this objective period")
+    if not is_habit_scheduled_for_date(habit, selected_date):
+        raise HTTPException(status_code=400, detail="Este objetivo não está programado para este dia")
     
     # Check if completion exists
     existing = await db.habit_completions.find_one(
@@ -1495,6 +1513,16 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+@app.on_event("startup")
+async def create_database_indexes():
+    """Create MongoDB indexes used by frequent finance queries."""
+    await db.expenses.create_index([("user_id", 1), ("month", 1)])
+    await db.expenses.create_index([("user_id", 1), ("category", 1)])
+    await db.financial_categories.create_index([("user_id", 1), ("name", 1)])
+    await db.incomes.create_index([("user_id", 1), ("month", 1)])
+    await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

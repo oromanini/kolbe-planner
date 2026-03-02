@@ -68,7 +68,18 @@ export default function Dashboard() {
         });
 
         const uniqueCompletedDays = new Set(periodCompletions.map((completion) => completion.date));
-        const requiredDays = Math.floor((endDate - startDate) / msPerDay) + 1;
+        const requiredDays = (() => {
+          let count = 0;
+          const cursor = new Date(startDate);
+          while (cursor <= endDate) {
+            const isWeekday = cursor.getDay() >= 1 && cursor.getDay() <= 5;
+            if (habit.frequency === 'weekdays' ? isWeekday : true) {
+              count++;
+            }
+            cursor.setDate(cursor.getDate() + 1);
+          }
+          return count;
+        })();
 
         if (uniqueCompletedDays.size < requiredDays) {
           items.push({

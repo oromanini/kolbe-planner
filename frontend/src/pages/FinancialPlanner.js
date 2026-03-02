@@ -61,6 +61,18 @@ const CATEGORY_ICON_OPTIONS = [
 
 const getCategoryIcon = (iconName) => CATEGORY_ICONS[iconName] || Receipt;
 
+const formatCurrencyInput = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  const cents = Number(digits || 0) / 100;
+  return cents.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const parseCurrencyInput = (value) => {
+  const normalized = String(value || "").replace(/\./g, "").replace(",", ".");
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+};
+
 export default function FinancialPlanner() {
   const navigate = useNavigate();
   const [currentMonth, setCurrentMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -70,10 +82,15 @@ export default function FinancialPlanner() {
   const [savings, setSavings] = useState([]);
   const [methods, setMethods] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [isLoadingFinanceData, setIsLoadingFinanceData] = useState(true);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [isLoadingExpenses, setIsLoadingExpenses] = useState(true);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [showIncomeForm, setShowIncomeForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState(null);
+  const [expenseAmountInput, setExpenseAmountInput] = useState("0,00");
   const [categoryToDelete, setCategoryToDelete] = useState(null);
   const [newCategory, setNewCategory] = useState({ name: "", icon: "shoppingBag" });
   const [editingCategoryId, setEditingCategoryId] = useState(null);
@@ -86,24 +103,44 @@ export default function FinancialPlanner() {
   }, [currentMonth]);
 
   const loadData = async () => {
+    setIsLoadingFinanceData(true);
+    setIsLoadingCategories(true);
+    setIsLoadingExpenses(true);
+
     try {
-      const [summaryRes, expensesRes, incomesRes, savingsRes, methodsRes, categoriesRes] = await Promise.all([
-        fetch(`${API}/finance/summary?month=${currentMonth}`, { credentials: "include" }),
-        fetch(`${API}/finance/expenses?month=${currentMonth}`, { credentials: "include" }),
-        fetch(`${API}/finance/incomes?month=${currentMonth}`, { credentials: "include" }),
-        fetch(`${API}/finance/savings`, { credentials: "include" }),
-        fetch(`${API}/finance/methods`, { credentials: "include" }),
-        fetch(`${API}/finance/categories`, { credentials: "include" }),
+      const summaryPromise = fetch(`${API}/finance/summary?month=${currentMonth}`, { credentials: "include" });
+      const categoriesPromise = fetch(`${API}/finance/categories`, { credentials: "include" })
+        .then((response) => response.json())
+        .then((data) => setCategories(data))
+        .finally(() => setIsLoadingCategories(false));
+      const expensesPromise = fetch(`${API}/finance/expenses?month=${currentMonth}`, { credentials: "include" })
+        .then((response) => response.json())
+        .then((data) => setExpenses(data))
+        .finally(() => setIsLoadingExpenses(false));
+      const incomesPromise = fetch(`${API}/finance/incomes?month=${currentMonth}`, { credentials: "include" });
+      const savingsPromise = fetch(`${API}/finance/savings`, { credentials: "include" });
+      const methodsPromise = fetch(`${API}/finance/methods`, { credentials: "include" });
+
+      const [summaryRes, incomesRes, savingsRes, methodsRes] = await Promise.all([
+        summaryPromise,
+        incomesPromise,
+        savingsPromise,
+        methodsPromise,
       ]);
 
       setSummary(await summaryRes.json());
-      setExpenses(await expensesRes.json());
       setIncomes(await incomesRes.json());
       setSavings(await savingsRes.json());
       setMethods(await methodsRes.json());
-      setCategories(await categoriesRes.json());
+
+      await Promise.all([categoriesPromise, expensesPromise]);
     } catch (error) {
       console.error("Error loading data:", error);
+      toast.error("Erro ao carregar dados financeiros");
+    } finally {
+      setIsLoadingFinanceData(false);
+      setIsLoadingCategories(false);
+      setIsLoadingExpenses(false);
     }
   };
 
@@ -135,6 +172,7 @@ export default function FinancialPlanner() {
       setShowExpenseForm(false);
       setEditingExpenseId(null);
       setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+      setExpenseAmountInput("0,00");
       loadData();
     } catch (error) {
       toast.error(error?.message || "Erro ao salvar gasto");
@@ -153,15 +191,18 @@ export default function FinancialPlanner() {
       category: expense.category,
       subcategory: expense.subcategory || "",
     });
+    setExpenseAmountInput(formatCurrencyInput(expense.amount));
   };
 
-  const handleDeleteExpense = async (expenseId) => {
-    if (!window.confirm("Tem certeza que deseja excluir este gasto?")) {
-      return;
-    }
+  const requestExpenseDelete = (expense) => {
+    setExpenseToDelete(expense);
+  };
+
+  const confirmDeleteExpense = async () => {
+    if (!expenseToDelete) return;
 
     try {
-      const response = await fetch(`${API}/finance/expenses/${expenseId}`, {
+      const response = await fetch(`${API}/finance/expenses/${expenseToDelete.expense_id}`, {
         method: "DELETE",
         credentials: "include",
       });
@@ -171,11 +212,13 @@ export default function FinancialPlanner() {
       }
 
       toast.success("Gasto excluído");
-      if (editingExpenseId === expenseId) {
+      if (editingExpenseId === expenseToDelete.expense_id) {
         setEditingExpenseId(null);
         setShowExpenseForm(false);
         setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+        setExpenseAmountInput("0,00");
       }
+      setExpenseToDelete(null);
       loadData();
     } catch (error) {
       toast.error("Erro ao excluir gasto");
@@ -332,6 +375,17 @@ export default function FinancialPlanner() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {isLoadingFinanceData && (
+          <div className="mb-6 glass-card p-4 border border-white/10 flex items-center gap-3">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+              className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full"
+            />
+            <p className="text-sm text-slate-300">Carregando categorias e gastos...</p>
+          </div>
+        )}
+
         <div className="grid md:grid-cols-3 gap-6 mb-8">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -427,7 +481,16 @@ export default function FinancialPlanner() {
             )}
 
             <div className="space-y-3">
-              {categories.map((category) => {
+              {isLoadingCategories ? (
+                <div className="glass-card p-4 flex items-center gap-3 text-slate-300">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full"
+                  />
+                  <span>Carregando categorias...</span>
+                </div>
+              ) : categories.map((category) => {
                 const Icon = getCategoryIcon(category.icon);
                 return (
                   <div key={category.category_id} className="glass-card p-4 flex items-center justify-between">
@@ -457,6 +520,7 @@ export default function FinancialPlanner() {
                   if (!showExpenseForm) {
                     setEditingExpenseId(null);
                     setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+                    setExpenseAmountInput("0,00");
                   }
                   setShowExpenseForm(!showExpenseForm);
                 }}
@@ -476,10 +540,15 @@ export default function FinancialPlanner() {
                   required
                 />
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   placeholder="Valor"
-                  value={newExpense.amount}
-                  onChange={(e) => setNewExpense({ ...newExpense, amount: parseFloat(e.target.value || 0) })}
+                  value={expenseAmountInput}
+                  onChange={(e) => {
+                    const formatted = formatCurrencyInput(e.target.value);
+                    setExpenseAmountInput(formatted);
+                    setNewExpense({ ...newExpense, amount: parseCurrencyInput(formatted) });
+                  }}
                   className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
                   required
                 />
@@ -524,6 +593,7 @@ export default function FinancialPlanner() {
                       setShowExpenseForm(false);
                       setEditingExpenseId(null);
                       setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+                      setExpenseAmountInput("0,00");
                     }}
                     className="px-6 py-3 border border-white/20 rounded-full disabled:opacity-60 disabled:cursor-not-allowed"
                   >
@@ -534,7 +604,16 @@ export default function FinancialPlanner() {
             )}
 
             <div className="space-y-3">
-              {expenses.map((exp) => {
+              {isLoadingExpenses ? (
+                <div className="glass-card p-4 flex items-center gap-3 text-slate-300">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full"
+                  />
+                  <span>Carregando gastos...</span>
+                </div>
+              ) : expenses.map((exp) => {
                 const category = categories.find((cat) => cat.name === exp.category);
                 const Icon = getCategoryIcon(category?.icon);
                 return (
@@ -551,7 +630,7 @@ export default function FinancialPlanner() {
                       <button onClick={() => handleStartEditExpense(exp)} className="p-1.5 rounded-md hover:bg-white/5">
                         <Pencil className="w-4 h-4 text-slate-300" />
                       </button>
-                      <button onClick={() => handleDeleteExpense(exp.expense_id)} className="p-1.5 rounded-md hover:bg-secondary/20">
+                      <button onClick={() => requestExpenseDelete(exp)} className="p-1.5 rounded-md hover:bg-secondary/20">
                         <Trash2 className="w-4 h-4 text-secondary" />
                       </button>
                     </div>
@@ -581,6 +660,25 @@ export default function FinancialPlanner() {
           </div>
         </div>
       </main>
+
+      {expenseToDelete && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="glass-card w-full max-w-lg p-6">
+            <h3 className="text-xl font-heading mb-3">Excluir gasto</h3>
+            <p className="text-slate-300 mb-6">
+              Tem certeza que deseja excluir o gasto <span className="font-semibold text-white">{expenseToDelete.name}</span>?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setExpenseToDelete(null)} className="px-5 py-2 border border-white/20 rounded-full">
+                Cancelar
+              </button>
+              <button onClick={confirmDeleteExpense} className="px-5 py-2 rounded-full bg-secondary text-white">
+                Excluir gasto
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {categoryToDelete && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
