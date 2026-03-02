@@ -73,6 +73,7 @@ export default function FinancialPlanner() {
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [showIncomeForm, setShowIncomeForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
+  const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState(null);
   const [newCategory, setNewCategory] = useState({ name: "", icon: "shoppingBag" });
   const [editingCategoryId, setEditingCategoryId] = useState(null);
@@ -107,6 +108,9 @@ export default function FinancialPlanner() {
 
   const handleAddExpense = async (e) => {
     e.preventDefault();
+    if (isSubmittingExpense) return;
+
+    setIsSubmittingExpense(true);
     try {
       const response = await fetch(`${API}/finance/expenses`, {
         method: "POST",
@@ -116,7 +120,9 @@ export default function FinancialPlanner() {
       });
 
       if (!response.ok) {
-        throw new Error("Erro ao adicionar gasto");
+        const errorPayload = await response.json().catch(() => null);
+        const message = errorPayload?.detail?.message || errorPayload?.detail || "Erro ao adicionar gasto";
+        throw new Error(message);
       }
 
       toast.success("Gasto adicionado");
@@ -124,7 +130,9 @@ export default function FinancialPlanner() {
       setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
       loadData();
     } catch (error) {
-      toast.error("Erro ao adicionar gasto");
+      toast.error(error?.message || "Erro ao adicionar gasto");
+    } finally {
+      setIsSubmittingExpense(false);
     }
   };
 
@@ -447,10 +455,19 @@ export default function FinancialPlanner() {
                   ))}
                 </select>
                 <div className="flex gap-3">
-                  <button type="submit" className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium">
-                    Adicionar
+                  <button
+                    type="submit"
+                    disabled={isSubmittingExpense}
+                    className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isSubmittingExpense ? "Adicionando..." : "Adicionar"}
                   </button>
-                  <button type="button" onClick={() => setShowExpenseForm(false)} className="px-6 py-3 border border-white/20 rounded-full">
+                  <button
+                    type="button"
+                    disabled={isSubmittingExpense}
+                    onClick={() => setShowExpenseForm(false)}
+                    className="px-6 py-3 border border-white/20 rounded-full disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
                     Cancelar
                   </button>
                 </div>
