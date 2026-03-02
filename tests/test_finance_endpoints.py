@@ -102,6 +102,9 @@ class FakeCollection:
     async def count_documents(self, query):
         return sum(1 for doc in self.docs if self._matches(doc, query))
 
+    async def estimated_document_count(self):
+        return len(self.docs)
+
 
 class FakeDB:
     def __init__(self):
@@ -110,6 +113,11 @@ class FakeDB:
         self.expenses = FakeCollection()
         self.incomes = FakeCollection()
         self.savings = FakeCollection()
+
+    async def command(self, name):
+        if name != "ping":
+            raise ValueError("unsupported command")
+        return {"ok": 1}
 
 
 @pytest.fixture(autouse=True)
@@ -264,3 +272,10 @@ def test_summary_calculates_totals_and_breakdown(fake_backend):
     assert summary["total_expenses"] == 1000
     assert summary["balance"] == 3000
     assert summary["category_breakdown"] == {"Casa": 700, "Carro": 300}
+
+
+def test_health_check_reports_ok(fake_backend):
+    result = run(server.health_check())
+    assert result["status"] == "ok"
+    assert result["checks"]["mongo"] == "ok"
+    assert result["checks"]["collections"] == "ok"
