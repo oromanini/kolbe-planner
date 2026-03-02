@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +35,11 @@ class FakeCollection:
         for key, value in query.items():
             if isinstance(value, dict) and "$ne" in value:
                 if doc.get(key) == value["$ne"]:
+                    return False
+                continue
+            if isinstance(value, dict) and "$regex" in value:
+                flags = re.IGNORECASE if "i" in value.get("$options", "") else 0
+                if not re.match(value["$regex"], str(doc.get(key, "")), flags):
                     return False
                 continue
             if doc.get(key) != value:
@@ -145,6 +151,15 @@ def test_categories_get_and_create_and_duplicate_conflict(fake_backend):
 
     listing = run(server.get_categories())
     assert len(listing) == 1
+
+
+def test_categories_normalize_whitespace_and_block_case_insensitive_duplicates(fake_backend):
+    created = run(server.create_category(server.CategoryCreate(name="  Mercado  ", icon="cart")))
+    assert created["name"] == "Mercado"
+
+    with pytest.raises(HTTPException) as exc:
+        run(server.create_category(server.CategoryCreate(name="mercado", icon="cart")))
+    assert exc.value.status_code == 409
 
 
 def test_categories_update_delete_and_force_delete_with_linked_expenses(fake_backend):
