@@ -73,6 +73,13 @@ const parseCurrencyInput = (value) => {
   return Number.isFinite(amount) ? amount : 0;
 };
 
+const getErrorMessage = (error, fallback) => {
+  if (error?.name === "TypeError") {
+    return "Erro de conexão. Tente novamente em instantes.";
+  }
+  return error?.message || fallback;
+};
+
 export default function FinancialPlanner() {
   const navigate = useNavigate();
   const [currentMonth, setCurrentMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -89,6 +96,7 @@ export default function FinancialPlanner() {
   const [showIncomeForm, setShowIncomeForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+  const [isSubmittingCategory, setIsSubmittingCategory] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [expenseAmountInput, setExpenseAmountInput] = useState("0,00");
   const [categoryToDelete, setCategoryToDelete] = useState(null);
@@ -107,40 +115,65 @@ export default function FinancialPlanner() {
     setIsLoadingCategories(true);
     setIsLoadingExpenses(true);
 
+    const loadCategories = fetch(`${API}/finance/categories`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorPayload = await response.json().catch(() => null);
+          throw new Error(errorPayload?.detail || "Erro ao carregar categorias");
+        }
+        return response.json();
+      })
+      .then((data) => setCategories(data))
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Erro ao carregar categorias"));
+      })
+      .finally(() => setIsLoadingCategories(false));
+
+    const loadExpenses = fetch(`${API}/finance/expenses?month=${currentMonth}`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorPayload = await response.json().catch(() => null);
+          throw new Error(errorPayload?.detail || "Erro ao carregar gastos");
+        }
+        return response.json();
+      })
+      .then((data) => setExpenses(data))
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Erro ao carregar gastos"));
+      })
+      .finally(() => setIsLoadingExpenses(false));
+
+    const loadFinanceOverview = Promise.all([
+      fetch(`${API}/finance/summary?month=${currentMonth}`, { credentials: "include" }),
+      fetch(`${API}/finance/incomes?month=${currentMonth}`, { credentials: "include" }),
+      fetch(`${API}/finance/savings`, { credentials: "include" }),
+      fetch(`${API}/finance/methods`, { credentials: "include" }),
+    ])
+      .then(async ([summaryRes, incomesRes, savingsRes, methodsRes]) => {
+        const responses = [summaryRes, incomesRes, savingsRes, methodsRes];
+        const labels = ["resumo", "entradas", "economias", "métodos de pagamento"];
+
+        for (let i = 0; i < responses.length; i += 1) {
+          if (!responses[i].ok) {
+            const errorPayload = await responses[i].json().catch(() => null);
+            throw new Error(errorPayload?.detail || `Erro ao carregar ${labels[i]}`);
+          }
+        }
+
+        const [summaryData, incomesData, savingsData, methodsData] = await Promise.all(responses.map((res) => res.json()));
+        setSummary(summaryData);
+        setIncomes(incomesData);
+        setSavings(savingsData);
+        setMethods(methodsData);
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Erro ao carregar dados financeiros"));
+      });
+
     try {
-      const summaryPromise = fetch(`${API}/finance/summary?month=${currentMonth}`, { credentials: "include" });
-      const categoriesPromise = fetch(`${API}/finance/categories`, { credentials: "include" })
-        .then((response) => response.json())
-        .then((data) => setCategories(data))
-        .finally(() => setIsLoadingCategories(false));
-      const expensesPromise = fetch(`${API}/finance/expenses?month=${currentMonth}`, { credentials: "include" })
-        .then((response) => response.json())
-        .then((data) => setExpenses(data))
-        .finally(() => setIsLoadingExpenses(false));
-      const incomesPromise = fetch(`${API}/finance/incomes?month=${currentMonth}`, { credentials: "include" });
-      const savingsPromise = fetch(`${API}/finance/savings`, { credentials: "include" });
-      const methodsPromise = fetch(`${API}/finance/methods`, { credentials: "include" });
-
-      const [summaryRes, incomesRes, savingsRes, methodsRes] = await Promise.all([
-        summaryPromise,
-        incomesPromise,
-        savingsPromise,
-        methodsPromise,
-      ]);
-
-      setSummary(await summaryRes.json());
-      setIncomes(await incomesRes.json());
-      setSavings(await savingsRes.json());
-      setMethods(await methodsRes.json());
-
-      await Promise.all([categoriesPromise, expensesPromise]);
-    } catch (error) {
-      console.error("Error loading data:", error);
-      toast.error("Erro ao carregar dados financeiros");
+      await Promise.all([loadCategories, loadExpenses, loadFinanceOverview]);
     } finally {
       setIsLoadingFinanceData(false);
-      setIsLoadingCategories(false);
-      setIsLoadingExpenses(false);
     }
   };
 
@@ -168,14 +201,22 @@ export default function FinancialPlanner() {
         throw new Error(message);
       }
 
+      const savedExpense = await response.json();
       toast.success(isEditing ? "Gasto atualizado" : "Gasto adicionado");
       setShowExpenseForm(false);
       setEditingExpenseId(null);
       setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
       setExpenseAmountInput("0,00");
+      if (isEditing) {
+        setExpenses((prev) => prev.map((expense) => (
+          expense.expense_id === editingExpenseId ? savedExpense : expense
+        )));
+      } else {
+        setExpenses((prev) => [savedExpense, ...prev]);
+      }
       loadData();
     } catch (error) {
-      toast.error(error?.message || "Erro ao salvar gasto");
+      toast.error(getErrorMessage(error, "Erro ao salvar gasto"));
     } finally {
       setIsSubmittingExpense(false);
     }
@@ -245,29 +286,48 @@ export default function FinancialPlanner() {
 
   const handleSaveCategory = async (e) => {
     e.preventDefault();
+    if (isSubmittingCategory) return;
+
+    if (!newCategory.name.trim()) {
+      toast.error("Informe o nome da categoria");
+      return;
+    }
+
     const isEditing = Boolean(editingCategoryId);
     const endpoint = isEditing ? `${API}/finance/categories/${editingCategoryId}` : `${API}/finance/categories`;
     const method = isEditing ? "PUT" : "POST";
 
+    setIsSubmittingCategory(true);
     try {
       const response = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(newCategory),
+        body: JSON.stringify({ ...newCategory, name: newCategory.name.trim() }),
       });
 
       if (!response.ok) {
-        throw new Error("Erro ao salvar categoria");
+        const errorPayload = await response.json().catch(() => null);
+        const message = errorPayload?.detail?.message || errorPayload?.detail || "Erro ao salvar categoria";
+        throw new Error(message);
       }
 
+      const savedCategory = await response.json();
       toast.success(isEditing ? "Categoria atualizada" : "Categoria criada");
       setShowCategoryForm(false);
       setEditingCategoryId(null);
       setNewCategory({ name: "", icon: "shoppingBag" });
-      loadData();
+      if (isEditing) {
+        setCategories((prev) => prev.map((category) => (
+          category.category_id === editingCategoryId ? savedCategory : category
+        )));
+      } else {
+        setCategories((prev) => [...prev, savedCategory]);
+      }
     } catch (error) {
-      toast.error("Erro ao salvar categoria");
+      toast.error(error?.message || "Erro ao salvar categoria");
+    } finally {
+      setIsSubmittingCategory(false);
     }
   };
 
@@ -462,8 +522,12 @@ export default function FinancialPlanner() {
                   ))}
                 </select>
                 <div className="flex gap-2">
-                  <button type="submit" className="flex-1 bg-primary text-white px-4 py-2 rounded-full font-medium">
-                    {editingCategoryId ? "Atualizar" : "Criar"}
+                  <button
+                    type="submit"
+                    disabled={isSubmittingCategory}
+                    className="flex-1 bg-primary text-white px-4 py-2 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isSubmittingCategory ? "Salvando..." : editingCategoryId ? "Atualizar" : "Criar"}
                   </button>
                   <button
                     type="button"
@@ -570,6 +634,7 @@ export default function FinancialPlanner() {
                   onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
                   className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
                   required
+                  disabled={!categories.length}
                 >
                   <option value="">Selecione uma categoria</option>
                   {categories.map((category) => (
@@ -578,10 +643,13 @@ export default function FinancialPlanner() {
                     </option>
                   ))}
                 </select>
+                {!categories.length && (
+                  <p className="text-sm text-amber-300">Cadastre uma categoria antes de adicionar gastos.</p>
+                )}
                 <div className="flex gap-3">
                   <button
                     type="submit"
-                    disabled={isSubmittingExpense}
+                    disabled={isSubmittingExpense || !categories.length || !methods.length}
                     className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isSubmittingExpense ? "Salvando..." : editingExpenseId ? "Atualizar" : "Adicionar"}
