@@ -30,20 +30,21 @@ export default function CalendarGrid({
 
   const getDateForDay = (day) => new Date(year, month - 1, day);
 
-  const isPastDay = (day) => {
-    const date = getDateForDay(day);
-    date.setHours(0, 0, 0, 0);
-    return date < today;
-  };
-
   const isHabitInPeriod = (habit, day) => {
     const date = getDateForDay(day);
     const start = toDate(habit.start_date);
     const end = toDate(habit.end_date);
-    return date >= start && date <= end;
+    const frequency = habit.frequency || "daily";
+    const isWeekday = date.getDay() >= 1 && date.getDay() <= 5;
+    const matchesFrequency = frequency === "weekdays" ? isWeekday : true;
+    return date >= start && date <= end && matchesFrequency;
   };
 
-  const canToggleAnyHabitOnDay = (day) => !isPastDay(day) && habits.some((habit) => isHabitInPeriod(habit, day));
+  const canToggleAnyHabitOnDay = (day) => {
+    const date = getDateForDay(day);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime() === today.getTime() && habits.some((habit) => isHabitInPeriod(habit, day));
+  };
 
   const getDayProgress = (day) => {
     const activeHabits = habits.filter((habit) => isHabitInPeriod(habit, day));
