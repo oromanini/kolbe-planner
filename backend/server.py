@@ -728,6 +728,14 @@ def normalize_method_name(name: str) -> str:
     return name.strip().casefold()
 
 
+def normalize_category_name(name: str) -> str:
+    return name.strip()
+
+
+def build_exact_name_regex(name: str) -> dict:
+    return {"$regex": f"^{re.escape(name)}$", "$options": "i"}
+
+
 async def ensure_default_financial_methods(user_id: str):
     existing_methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0, "name": 1}).to_list(200)
     existing_names = {normalize_method_name(method.get("name", "")) for method in existing_methods}
@@ -806,9 +814,12 @@ async def create_category(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+    normalized_name = normalize_category_name(data.name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Category name is required")
 
     existing = await db.financial_categories.find_one(
-        {"user_id": user.user_id, "name": data.name},
+        {"user_id": user.user_id, "name": build_exact_name_regex(normalized_name)},
         {"_id": 0, "category_id": 1}
     )
     if existing:
@@ -817,7 +828,7 @@ async def create_category(
     category = {
         "category_id": f"cat_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
-        "name": data.name,
+        "name": normalized_name,
         "icon": data.icon,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
@@ -835,6 +846,10 @@ async def update_category(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+    normalized_name = normalize_category_name(data.name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Category name is required")
+
     existing = await db.financial_categories.find_one(
         {"category_id": category_id, "user_id": user.user_id},
         {"_id": 0}
@@ -842,11 +857,11 @@ async def update_category(
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    if existing.get("name") != data.name:
+    if existing.get("name") != normalized_name:
         duplicate = await db.financial_categories.find_one(
             {
                 "user_id": user.user_id,
-                "name": data.name,
+                "name": build_exact_name_regex(normalized_name),
                 "category_id": {"$ne": category_id}
             },
             {"_id": 0, "category_id": 1}
@@ -857,15 +872,15 @@ async def update_category(
     try:
         await db.financial_categories.update_one(
             {"category_id": category_id, "user_id": user.user_id},
-            {"$set": {"name": data.name, "icon": data.icon}}
+            {"$set": {"name": normalized_name, "icon": data.icon}}
         )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Category already exists")
 
-    if existing.get("name") != data.name:
+    if existing.get("name") != normalized_name:
         await db.expenses.update_many(
             {"user_id": user.user_id, "category": existing.get("name")},
-            {"$set": {"category": data.name}}
+            {"$set": {"category": normalized_name}}
         )
 
     category = await db.financial_categories.find_one(
