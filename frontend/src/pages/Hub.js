@@ -40,7 +40,7 @@ export default function Hub() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
-              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
+              <img src="/kp-logo.png" alt="Kolbe Planner" className="h-full w-full object-contain" />
             </div>
             <span className="font-heading text-xl font-medium text-white">Kolbe Planner</span>
           </div>

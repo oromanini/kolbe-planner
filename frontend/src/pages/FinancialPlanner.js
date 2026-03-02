@@ -246,7 +246,7 @@ export default function FinancialPlanner() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
-              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
+              <img src="/kp-logo.png" alt="Kolbe Planner" className="h-full w-full object-contain" />
             </div>
             <div>
               <h1 className="font-heading text-2xl font-medium text-white">Planner Financeiro</h1>
