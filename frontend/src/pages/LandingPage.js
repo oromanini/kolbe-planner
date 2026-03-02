@@ -68,7 +68,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
               <img
-                src="/kp-logo.svg"
+                src="/kp-logo.png"
                 alt="Kolbe Planner"
                 className="h-full w-full object-contain"
               />

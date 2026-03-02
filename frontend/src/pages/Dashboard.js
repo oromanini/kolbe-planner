@@ -207,7 +207,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-xl border border-white/10 p-1.5 bg-white/5 flex items-center justify-center overflow-hidden">
-              <img src="/kp-logo.svg" alt="Kolbe Planner" className="h-full w-full object-contain" />
+              <img src="/kp-logo.png" alt="Kolbe Planner" className="h-full w-full object-contain" />
             </div>
             <div>
               <h1 className="font-heading text-2xl font-medium text-white" data-testid="dashboard-title">
