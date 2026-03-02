@@ -137,6 +137,34 @@ export default function Dashboard() {
   };
 
   const handleToggleCompletion = async (habitId, date) => {
+    const existingCompletion = completions.find(
+      (completion) => completion.habit_id === habitId && completion.date === date,
+    );
+    const optimisticCompleted = !(existingCompletion?.completed || false);
+
+    setCompletions((prev) => {
+      const completionIndex = prev.findIndex(
+        (completion) => completion.habit_id === habitId && completion.date === date,
+      );
+
+      if (completionIndex >= 0) {
+        return prev.map((completion, index) => (
+          index === completionIndex
+            ? { ...completion, completed: optimisticCompleted }
+            : completion
+        ));
+      }
+
+      return [
+        ...prev,
+        {
+          habit_id: habitId,
+          date,
+          completed: optimisticCompleted,
+        },
+      ];
+    });
+
     try {
       const res = await fetch(`${API}/completions/toggle`, {
         method: 'POST',
@@ -150,7 +178,28 @@ export default function Dashboard() {
         throw new Error(result.detail || 'Não foi possível atualizar este objetivo');
       }
 
-      await loadData();
+      setCompletions((prev) => {
+        const completionIndex = prev.findIndex(
+          (completion) => completion.habit_id === habitId && completion.date === date,
+        );
+
+        if (completionIndex >= 0) {
+          return prev.map((completion, index) => (
+            index === completionIndex
+              ? { ...completion, completed: result.completed }
+              : completion
+          ));
+        }
+
+        return [
+          ...prev,
+          {
+            habit_id: habitId,
+            date,
+            completed: result.completed,
+          },
+        ];
+      });
 
       if (result.completed) {
         toast.success(effectiveMode === 'kolbe' ? 'Persevere! Mais um passo na constância.' : 'Objetivo marcado!', {
@@ -158,6 +207,26 @@ export default function Dashboard() {
         });
       }
     } catch (error) {
+      setCompletions((prev) => {
+        const completionIndex = prev.findIndex(
+          (completion) => completion.habit_id === habitId && completion.date === date,
+        );
+
+        if (completionIndex >= 0) {
+          if (!existingCompletion) {
+            return prev.filter((_, index) => index !== completionIndex);
+          }
+
+          return prev.map((completion, index) => (
+            index === completionIndex
+              ? { ...completion, completed: existingCompletion.completed }
+              : completion
+          ));
+        }
+
+        return existingCompletion ? [...prev, existingCompletion] : prev;
+      });
+
       console.error('Error toggling completion:', error);
       toast.error(error.message || 'Erro ao atualizar');
     }

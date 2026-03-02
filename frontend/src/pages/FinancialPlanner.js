@@ -78,6 +78,7 @@ export default function FinancialPlanner() {
   const [newCategory, setNewCategory] = useState({ name: "", icon: "shoppingBag" });
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [newExpense, setNewExpense] = useState({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [newIncome, setNewIncome] = useState({ name: "", amount: 0 });
 
   useEffect(() => {
@@ -106,33 +107,78 @@ export default function FinancialPlanner() {
     }
   };
 
-  const handleAddExpense = async (e) => {
+  const handleSaveExpense = async (e) => {
     e.preventDefault();
     if (isSubmittingExpense) return;
 
+    const isEditing = Boolean(editingExpenseId);
+
     setIsSubmittingExpense(true);
     try {
-      const response = await fetch(`${API}/finance/expenses`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ ...newExpense, month: currentMonth }),
-      });
+      const response = await fetch(
+        isEditing ? `${API}/finance/expenses/${editingExpenseId}` : `${API}/finance/expenses`,
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ ...newExpense, month: currentMonth }),
+        },
+      );
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
-        const message = errorPayload?.detail?.message || errorPayload?.detail || "Erro ao adicionar gasto";
+        const message = errorPayload?.detail?.message || errorPayload?.detail || "Erro ao salvar gasto";
         throw new Error(message);
       }
 
-      toast.success("Gasto adicionado");
+      toast.success(isEditing ? "Gasto atualizado" : "Gasto adicionado");
       setShowExpenseForm(false);
+      setEditingExpenseId(null);
       setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
       loadData();
     } catch (error) {
-      toast.error(error?.message || "Erro ao adicionar gasto");
+      toast.error(error?.message || "Erro ao salvar gasto");
     } finally {
       setIsSubmittingExpense(false);
+    }
+  };
+
+  const handleStartEditExpense = (expense) => {
+    setShowExpenseForm(true);
+    setEditingExpenseId(expense.expense_id);
+    setNewExpense({
+      name: expense.name,
+      amount: expense.amount,
+      method_id: expense.method_id,
+      category: expense.category,
+      subcategory: expense.subcategory || "",
+    });
+  };
+
+  const handleDeleteExpense = async (expenseId) => {
+    if (!window.confirm("Tem certeza que deseja excluir este gasto?")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API}/finance/expenses/${expenseId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Erro ao excluir gasto");
+      }
+
+      toast.success("Gasto excluído");
+      if (editingExpenseId === expenseId) {
+        setEditingExpenseId(null);
+        setShowExpenseForm(false);
+        setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+      }
+      loadData();
+    } catch (error) {
+      toast.error("Erro ao excluir gasto");
     }
   };
 
@@ -406,13 +452,22 @@ export default function FinancialPlanner() {
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-heading text-2xl font-medium text-white">Gastos</h2>
-              <button onClick={() => setShowExpenseForm(!showExpenseForm)} className="p-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-all">
+              <button
+                onClick={() => {
+                  if (!showExpenseForm) {
+                    setEditingExpenseId(null);
+                    setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+                  }
+                  setShowExpenseForm(!showExpenseForm);
+                }}
+                className="p-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-all"
+              >
                 <Plus className="w-5 h-5 text-primary" />
               </button>
             </div>
 
             {showExpenseForm && (
-              <form onSubmit={handleAddExpense} className="glass-card p-6 mb-6 space-y-4">
+              <form onSubmit={handleSaveExpense} className="glass-card p-6 mb-6 space-y-4">
                 <input
                   placeholder="Nome"
                   value={newExpense.name}
@@ -460,12 +515,16 @@ export default function FinancialPlanner() {
                     disabled={isSubmittingExpense}
                     className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isSubmittingExpense ? "Adicionando..." : "Adicionar"}
+                    {isSubmittingExpense ? "Salvando..." : editingExpenseId ? "Atualizar" : "Adicionar"}
                   </button>
                   <button
                     type="button"
                     disabled={isSubmittingExpense}
-                    onClick={() => setShowExpenseForm(false)}
+                    onClick={() => {
+                      setShowExpenseForm(false);
+                      setEditingExpenseId(null);
+                      setNewExpense({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
+                    }}
                     className="px-6 py-3 border border-white/20 rounded-full disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Cancelar
@@ -487,7 +546,15 @@ export default function FinancialPlanner() {
                         {exp.category}
                       </p>
                     </div>
-                    <p className="font-heading text-xl text-white">R$ {exp.amount.toFixed(2)}</p>
+                    <div className="flex items-center gap-3">
+                      <p className="font-heading text-xl text-white">R$ {exp.amount.toFixed(2)}</p>
+                      <button onClick={() => handleStartEditExpense(exp)} className="p-1.5 rounded-md hover:bg-white/5">
+                        <Pencil className="w-4 h-4 text-slate-300" />
+                      </button>
+                      <button onClick={() => handleDeleteExpense(exp.expense_id)} className="p-1.5 rounded-md hover:bg-secondary/20">
+                        <Trash2 className="w-4 h-4 text-secondary" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}

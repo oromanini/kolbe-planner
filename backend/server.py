@@ -673,6 +673,14 @@ class ExpenseCreate(BaseModel):
     subcategory: Optional[str] = None
     month: str
 
+class ExpenseUpdate(BaseModel):
+    name: str
+    amount: float
+    method_id: str
+    category: str
+    subcategory: Optional[str] = None
+    month: str
+
 class IncomeCreate(BaseModel):
     name: str
     amount: float
@@ -926,6 +934,45 @@ async def create_expense(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.expenses.insert_one(expense)
+    return expense
+
+@api_router.put("/finance/expenses/{expense_id}")
+async def update_expense(
+    expense_id: str,
+    data: ExpenseUpdate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+
+    category_exists = await db.financial_categories.find_one(
+        {"user_id": user.user_id, "name": data.category},
+        {"_id": 0, "category_id": 1}
+    )
+    if not category_exists:
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    update_result = await db.expenses.update_one(
+        {"expense_id": expense_id, "user_id": user.user_id},
+        {
+            "$set": {
+                "name": data.name,
+                "amount": data.amount,
+                "method_id": data.method_id,
+                "category": data.category,
+                "subcategory": data.subcategory,
+                "month": data.month,
+            }
+        },
+    )
+
+    if update_result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+
+    expense = await db.expenses.find_one(
+        {"expense_id": expense_id, "user_id": user.user_id},
+        {"_id": 0}
+    )
     return expense
 
 @api_router.delete("/finance/expenses/{expense_id}")
