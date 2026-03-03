@@ -645,7 +645,6 @@ class FinancialCategory(BaseModel):
     category_id: str
     user_id: str
     name: str
-    icon: str
     created_at: datetime
 
 class Expense(BaseModel):
@@ -755,11 +754,9 @@ async def ensure_default_financial_methods(user_id: str):
 
 class CategoryCreate(BaseModel):
     name: str
-    icon: str
 
 class CategoryUpdate(BaseModel):
     name: str
-    icon: str
 
 
 # ============ FINANCIAL ENDPOINTS ============
@@ -829,7 +826,6 @@ async def create_category(
         "category_id": f"cat_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
         "name": normalized_name,
-        "icon": data.icon,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     try:
@@ -872,7 +868,7 @@ async def update_category(
     try:
         await db.financial_categories.update_one(
             {"category_id": category_id, "user_id": user.user_id},
-            {"$set": {"name": normalized_name, "icon": data.icon}}
+            {"$set": {"name": normalized_name}}
         )
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail="Category already exists")
@@ -1536,10 +1532,33 @@ async def health_check():
 # Include the router in the main app
 app.include_router(api_router)
 
+DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://localhost:5173,https://kolbeplanner.space,https://www.kolbeplanner.space"
+
+
+def _parse_cors_origins(raw_origins: str) -> list[str]:
+    """Normalize CORS origins from env to avoid mismatch issues."""
+    origins = []
+    for origin in raw_origins.split(','):
+        value = origin.strip()
+        if not value:
+            continue
+        if value != "*":
+            value = value.rstrip('/')
+        origins.append(value)
+
+    return origins
+
+
+cors_origins = _parse_cors_origins(os.environ.get("CORS_ORIGINS", DEFAULT_CORS_ORIGINS))
+if not cors_origins:
+    cors_origins = _parse_cors_origins(DEFAULT_CORS_ORIGINS)
+allow_all_origins = "*" in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=[] if allow_all_origins else cors_origins,
+    allow_origin_regex="https?://.*" if allow_all_origins else None,
     allow_methods=["*"],
     allow_headers=["*"],
 )
