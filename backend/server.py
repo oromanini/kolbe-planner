@@ -752,6 +752,19 @@ async def ensure_default_financial_methods(user_id: str):
             }
         )
 
+
+async def ensure_financial_category_indexes() -> None:
+    """Remove stale unique indexes that block multiple categories per user."""
+    indexes = await db.financial_categories.index_information()
+    for index_name, index_meta in indexes.items():
+        if index_name == "_id_":
+            continue
+
+        keys = [tuple(entry) for entry in index_meta.get("key", [])]
+        if index_meta.get("unique") and keys == [("user_id", 1)]:
+            await db.financial_categories.drop_index(index_name)
+
+
 class CategoryCreate(BaseModel):
     name: str
 
@@ -831,7 +844,14 @@ async def create_category(
     try:
         await db.financial_categories.insert_one(category)
     except DuplicateKeyError:
-        raise HTTPException(status_code=409, detail="Category already exists")
+        duplicate = await db.financial_categories.find_one(
+            {"user_id": user.user_id, "name": build_exact_name_regex(normalized_name)},
+            {"_id": 0, "category_id": 1}
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Category already exists")
+        logger.exception("Duplicate key while creating category %s for user %s", normalized_name, user.user_id)
+        raise HTTPException(status_code=500, detail="Error while saving category")
     return category
 
 @api_router.put("/finance/categories/{category_id}")
@@ -871,7 +891,22 @@ async def update_category(
             {"$set": {"name": normalized_name}}
         )
     except DuplicateKeyError:
-        raise HTTPException(status_code=409, detail="Category already exists")
+        duplicate = await db.financial_categories.find_one(
+            {
+                "user_id": user.user_id,
+                "name": build_exact_name_regex(normalized_name),
+                "category_id": {"$ne": category_id}
+            },
+            {"_id": 0, "category_id": 1}
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Category already exists")
+        logger.exception(
+            "Duplicate key while updating category %s for user %s",
+            category_id,
+            user.user_id,
+        )
+        raise HTTPException(status_code=500, detail="Error while saving category")
 
     if existing.get("name") != normalized_name:
         await db.expenses.update_many(
@@ -1576,6 +1611,7 @@ async def create_database_indexes():
     """Create MongoDB indexes used by frequent finance queries."""
     await db.expenses.create_index([("user_id", 1), ("month", 1)])
     await db.expenses.create_index([("user_id", 1), ("category", 1)])
+    await ensure_financial_category_indexes()
     await db.financial_categories.create_index([("user_id", 1), ("name", 1)])
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
