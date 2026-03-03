@@ -12,6 +12,7 @@ import {
   Calendar,
   Receipt,
   Target,
+  Landmark,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { toast } from "sonner";
