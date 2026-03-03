@@ -10,55 +10,12 @@ import {
   Trash2,
   Pencil,
   Calendar,
-  ShoppingBag,
-  Car,
-  Home,
-  Utensils,
-  HeartPulse,
-  Briefcase,
-  GraduationCap,
-  Wallet,
-  Shirt,
-  Plane,
   Receipt,
-  Landmark,
   Target,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { toast } from "sonner";
 import { apiRequest, checkApiHealth } from "@/lib/api";
-
-const CATEGORY_ICONS = {
-  shoppingBag: ShoppingBag,
-  car: Car,
-  home: Home,
-  utensils: Utensils,
-  heartPulse: HeartPulse,
-  briefcase: Briefcase,
-  graduationCap: GraduationCap,
-  wallet: Wallet,
-  shirt: Shirt,
-  plane: Plane,
-  receipt: Receipt,
-  landmark: Landmark,
-};
-
-const CATEGORY_ICON_OPTIONS = [
-  { value: "shoppingBag", label: "Compras" },
-  { value: "car", label: "Transporte" },
-  { value: "home", label: "Casa" },
-  { value: "utensils", label: "Alimentação" },
-  { value: "heartPulse", label: "Saúde" },
-  { value: "briefcase", label: "Trabalho" },
-  { value: "graduationCap", label: "Educação" },
-  { value: "wallet", label: "Carteira" },
-  { value: "shirt", label: "Vestuário" },
-  { value: "plane", label: "Viagem" },
-  { value: "receipt", label: "Contas" },
-  { value: "landmark", label: "Impostos" },
-];
-
-const getCategoryIcon = (iconName) => CATEGORY_ICONS[iconName] || Receipt;
 
 const formatCurrencyInput = (value) => {
   const digits = String(value || "").replace(/\D/g, "");
@@ -96,10 +53,11 @@ export default function FinancialPlanner() {
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
   const [isSubmittingCategory, setIsSubmittingCategory] = useState(false);
+  const [isSyncingCategories, setIsSyncingCategories] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [expenseAmountInput, setExpenseAmountInput] = useState("0,00");
   const [categoryToDelete, setCategoryToDelete] = useState(null);
-  const [newCategory, setNewCategory] = useState({ name: "", icon: "shoppingBag" });
+  const [newCategory, setNewCategory] = useState({ name: "" });
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [newExpense, setNewExpense] = useState({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
   const [editingExpenseId, setEditingExpenseId] = useState(null);
@@ -124,19 +82,7 @@ export default function FinancialPlanner() {
       return;
     }
 
-    const loadCategories = apiRequest(`/finance/categories`)
-      .then(async (response) => {
-        if (!response.ok) {
-          const errorPayload = await response.json().catch(() => null);
-          throw new Error(errorPayload?.detail || "Erro ao carregar categorias");
-        }
-        return response.json();
-      })
-      .then((data) => setCategories(data))
-      .catch((error) => {
-        toast.error(getErrorMessage(error, "Erro ao carregar categorias"));
-      })
-      .finally(() => setIsLoadingCategories(false));
+    const loadCategories = refreshCategories({ silent: false });
 
     const loadExpenses = apiRequest(`/finance/expenses?month=${currentMonth}`)
       .then(async (response) => {
@@ -183,6 +129,41 @@ export default function FinancialPlanner() {
       await Promise.all([loadCategories, loadExpenses, loadFinanceOverview]);
     } finally {
       setIsLoadingFinanceData(false);
+    }
+  };
+
+  const refreshCategories = async ({ silent = true } = {}) => {
+    if (!silent) {
+      setIsLoadingCategories(true);
+    }
+
+    setIsSyncingCategories(true);
+    try {
+      const response = await apiRequest(`/finance/categories`);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Erro ao carregar categorias");
+      }
+
+      const data = await response.json();
+      setCategories(data);
+      setNewExpense((prev) => {
+        if (!prev.category) {
+          return prev;
+        }
+
+        const categoryStillExists = data.some((category) => category.name === prev.category);
+        return categoryStillExists ? prev : { ...prev, category: "" };
+      });
+    } catch (error) {
+      if (!silent) {
+        toast.error(getErrorMessage(error, "Erro ao carregar categorias"));
+      }
+    } finally {
+      if (!silent) {
+        setIsLoadingCategories(false);
+      }
+      setIsSyncingCategories(false);
     }
   };
 
@@ -321,7 +302,7 @@ export default function FinancialPlanner() {
       toast.success(isEditing ? "Categoria atualizada" : "Categoria criada");
       setShowCategoryForm(false);
       setEditingCategoryId(null);
-      setNewCategory({ name: "", icon: "shoppingBag" });
+      setNewCategory({ name: "" });
       if (isEditing) {
         setCategories((prev) => prev.map((category) => (
           category.category_id === editingCategoryId ? savedCategory : category
@@ -329,6 +310,8 @@ export default function FinancialPlanner() {
       } else {
         setCategories((prev) => [...prev, savedCategory]);
       }
+
+      refreshCategories();
     } catch (error) {
       toast.error(error?.message || "Erro ao salvar categoria");
     } finally {
@@ -339,7 +322,7 @@ export default function FinancialPlanner() {
   const handleStartEditCategory = (category) => {
     setShowCategoryForm(true);
     setEditingCategoryId(category.category_id);
-    setNewCategory({ name: category.name, icon: category.icon || "receipt" });
+    setNewCategory({ name: category.name });
   };
 
   const requestCategoryDelete = async (category) => {
@@ -360,6 +343,8 @@ export default function FinancialPlanner() {
 
       toast.success("Categoria excluída");
       setCategories((prev) => prev.filter((item) => item.category_id !== category.category_id));
+      setNewExpense((prev) => (prev.category === category.name ? { ...prev, category: "" } : prev));
+      refreshCategories();
       loadData();
     } catch (error) {
       toast.error("Erro ao excluir categoria");
@@ -381,7 +366,9 @@ export default function FinancialPlanner() {
       toast.success("Categoria e itens associados excluídos");
       setCategories((prev) => prev.filter((item) => item.category_id !== categoryToDelete.category_id));
       setExpenses((prev) => prev.filter((expense) => expense.category !== categoryToDelete.name));
+      setNewExpense((prev) => (prev.category === categoryToDelete.name ? { ...prev, category: "" } : prev));
       setCategoryToDelete(null);
+      refreshCategories();
       loadData();
     } catch (error) {
       toast.error("Erro ao excluir categoria");
@@ -494,12 +481,24 @@ export default function FinancialPlanner() {
         <div className="grid lg:grid-cols-3 gap-8">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-heading text-2xl font-medium text-white">Categorias</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-heading text-2xl font-medium text-white">Categorias</h2>
+                {isSyncingCategories && (
+                  <div className="flex items-center gap-1 text-xs text-slate-300">
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full"
+                    />
+                    <span>Sincronizando...</span>
+                  </div>
+                )}
+              </div>
               <button
                 onClick={() => {
                   setShowCategoryForm(!showCategoryForm);
                   setEditingCategoryId(null);
-                  setNewCategory({ name: "", icon: "shoppingBag" });
+                  setNewCategory({ name: "" });
                 }}
                 className="p-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-all"
               >
@@ -516,31 +515,27 @@ export default function FinancialPlanner() {
                   className="w-full px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
                   required
                 />
-                <select
-                  value={newCategory.icon}
-                  onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
-                  className="w-full px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
-                >
-                  {CATEGORY_ICON_OPTIONS.map((iconOption) => (
-                    <option key={iconOption.value} value={iconOption.value}>
-                      {iconOption.label}
-                    </option>
-                  ))}
-                </select>
                 <div className="flex gap-2">
                   <button
                     type="submit"
                     disabled={isSubmittingCategory}
                     className="flex-1 bg-primary text-white px-4 py-2 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isSubmittingCategory ? "Salvando..." : editingCategoryId ? "Atualizar" : "Criar"}
+                    {isSubmittingCategory ? (<>
+                      <motion.span
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full mr-2 align-[-2px]"
+                      />
+                      Salvando...
+                    </>) : editingCategoryId ? "Atualizar" : "Criar"}
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       setShowCategoryForm(false);
                       setEditingCategoryId(null);
-                      setNewCategory({ name: "", icon: "shoppingBag" });
+                      setNewCategory({ name: "" });
                     }}
                     className="px-4 py-2 border border-white/20 rounded-full"
                   >
@@ -561,11 +556,10 @@ export default function FinancialPlanner() {
                   <span>Carregando categorias...</span>
                 </div>
               ) : categories.map((category) => {
-                const Icon = getCategoryIcon(category.icon);
                 return (
                   <div key={category.category_id} className="glass-card p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <Icon className="w-4 h-4 text-primary" />
+                      <Receipt className="w-4 h-4 text-primary" />
                       <p className="font-medium text-white">{category.name}</p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -658,7 +652,14 @@ export default function FinancialPlanner() {
                     disabled={isSubmittingExpense || !categories.length || !methods.length}
                     className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    {isSubmittingExpense ? "Salvando..." : editingExpenseId ? "Atualizar" : "Adicionar"}
+                    {isSubmittingExpense ? (<>
+                      <motion.span
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full mr-2 align-[-2px]"
+                      />
+                      Salvando...
+                    </>) : editingExpenseId ? "Atualizar" : "Adicionar"}
                   </button>
                   <button
                     type="button"
@@ -688,14 +689,12 @@ export default function FinancialPlanner() {
                   <span>Carregando gastos...</span>
                 </div>
               ) : expenses.map((exp) => {
-                const category = categories.find((cat) => cat.name === exp.category);
-                const Icon = getCategoryIcon(category?.icon);
                 return (
                   <div key={exp.expense_id} className="glass-card p-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-white">{exp.name}</p>
                       <p className="text-sm text-slate-400 flex items-center gap-2">
-                        <Icon className="w-3.5 h-3.5" />
+                        <Receipt className="w-3.5 h-3.5" />
                         {exp.category}
                       </p>
                     </div>
