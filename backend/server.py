@@ -771,6 +771,37 @@ class CategoryUpdate(BaseModel):
     name: str
 
 
+async def resolve_user_category_name(user_id: str, raw_category: str) -> Optional[str]:
+    """Resolve category payload to the canonical category name stored for the user."""
+    category_value = (raw_category or "").strip()
+    if not category_value:
+        return None
+
+    by_id = await db.financial_categories.find_one(
+        {"user_id": user_id, "category_id": category_value},
+        {"_id": 0, "name": 1},
+    )
+    if by_id and by_id.get("name"):
+        return by_id["name"]
+
+    normalized_key = normalize_category_key(category_value)
+    by_key = await db.financial_categories.find_one(
+        {"user_id": user_id, "name_key": normalized_key},
+        {"_id": 0, "name": 1},
+    )
+    if by_key and by_key.get("name"):
+        return by_key["name"]
+
+    by_exact_name = await db.financial_categories.find_one(
+        {"user_id": user_id, "name": category_value},
+        {"_id": 0, "name": 1},
+    )
+    if by_exact_name and by_exact_name.get("name"):
+        return by_exact_name["name"]
+
+    return None
+
+
 # ============ FINANCIAL ENDPOINTS ============
 
 # Methods
@@ -971,11 +1002,8 @@ async def create_expense(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
-    category_exists = await db.financial_categories.find_one(
-        {"user_id": user.user_id, "name": data.category},
-        {"_id": 0, "category_id": 1}
-    )
-    if not category_exists:
+    resolved_category_name = await resolve_user_category_name(user.user_id, data.category)
+    if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
     expense = {
@@ -984,7 +1012,7 @@ async def create_expense(
         "name": data.name,
         "amount": data.amount,
         "method_id": data.method_id,
-        "category": data.category,
+        "category": resolved_category_name,
         "subcategory": data.subcategory,
         "month": data.month,
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -1001,11 +1029,8 @@ async def update_expense(
 ):
     user = await get_current_user(session_token, authorization)
 
-    category_exists = await db.financial_categories.find_one(
-        {"user_id": user.user_id, "name": data.category},
-        {"_id": 0, "category_id": 1}
-    )
-    if not category_exists:
+    resolved_category_name = await resolve_user_category_name(user.user_id, data.category)
+    if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
     update_result = await db.expenses.update_one(
@@ -1015,7 +1040,7 @@ async def update_expense(
                 "name": data.name,
                 "amount": data.amount,
                 "method_id": data.method_id,
-                "category": data.category,
+                "category": resolved_category_name,
                 "subcategory": data.subcategory,
                 "month": data.month,
             }

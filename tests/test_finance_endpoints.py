@@ -231,6 +231,23 @@ def test_expenses_get_create_and_delete(fake_backend):
     assert missing.value.status_code == 404
 
 
+def test_expenses_accept_category_id_and_case_insensitive_name(fake_backend):
+    fake_backend.financial_categories.docs.append({"category_id": "cat_1", "user_id": "user_1", "name": "Transporte", "name_key": "transporte"})
+
+    by_id = run(
+        server.create_expense(
+            server.ExpenseCreate(name="Metrô", amount=9, method_id="method_1", category="cat_1", month="2026-03")
+        )
+    )
+    assert by_id["category"] == "Transporte"
+
+    by_case_insensitive_name = run(
+        server.create_expense(
+            server.ExpenseCreate(name="Táxi", amount=20, method_id="method_1", category=" transporte ", month="2026-03")
+        )
+    )
+    assert by_case_insensitive_name["category"] == "Transporte"
+
 def test_incomes_get_create_and_delete(fake_backend):
     created = run(server.create_income(server.IncomeCreate(name="Salário", amount=3200, month="2026-03")))
     assert created["name"] == "Salário"
