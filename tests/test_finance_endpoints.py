@@ -149,25 +149,34 @@ def test_methods_get_and_create(fake_backend):
     assert len(fake_backend.financial_methods.docs) == len(server.DEFAULT_FINANCIAL_METHODS) + 1
 
 
-def test_categories_get_and_create_and_duplicate_conflict(fake_backend):
+def test_categories_get_and_create_is_idempotent(fake_backend):
     created = run(server.create_category(server.CategoryCreate(name="Carro", icon="car")))
     assert created["name"] == "Carro"
 
-    with pytest.raises(HTTPException) as exc:
-        run(server.create_category(server.CategoryCreate(name="Carro", icon="car")))
-    assert exc.value.status_code == 409
+    duplicated = run(server.create_category(server.CategoryCreate(name="Carro", icon="car")))
+    assert duplicated["name"] == "Carro"
+    assert duplicated["category_id"] == created["category_id"]
 
     listing = run(server.get_categories())
     assert len(listing) == 1
 
 
-def test_categories_normalize_whitespace_and_block_case_insensitive_duplicates(fake_backend):
+def test_categories_normalize_whitespace_and_reuse_case_insensitive_duplicates(fake_backend):
     created = run(server.create_category(server.CategoryCreate(name="  Mercado  ", icon="cart")))
     assert created["name"] == "Mercado"
 
-    with pytest.raises(HTTPException) as exc:
-        run(server.create_category(server.CategoryCreate(name="mercado", icon="cart")))
-    assert exc.value.status_code == 409
+    duplicated = run(server.create_category(server.CategoryCreate(name="mercado", icon="cart")))
+    assert duplicated["name"] == "Mercado"
+    assert duplicated["category_id"] == created["category_id"]
+
+
+def test_categories_create_different_names_do_not_collide(fake_backend):
+    first = run(server.create_category(server.CategoryCreate(name="Categoria A", icon="a")))
+    second = run(server.create_category(server.CategoryCreate(name="Categoria 12345123123123", icon="b")))
+
+    assert first["category_id"] != second["category_id"]
+    listing = run(server.get_categories())
+    assert {item["name"] for item in listing} == {"Categoria A", "Categoria 12345123123123"}
 
 
 def test_categories_update_delete_and_force_delete_with_linked_expenses(fake_backend):

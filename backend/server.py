@@ -13,7 +13,6 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
-import re
 from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).parent
@@ -731,8 +730,8 @@ def normalize_category_name(name: str) -> str:
     return name.strip()
 
 
-def build_exact_name_regex(name: str) -> dict:
-    return {"$regex": f"^{re.escape(name)}$", "$options": "i"}
+def normalize_category_key(name: str) -> str:
+    return normalize_category_name(name).casefold()
 
 
 async def ensure_default_financial_methods(user_id: str):
@@ -820,38 +819,43 @@ async def get_categories(
 @api_router.post("/finance/categories", status_code=201)
 async def create_category(
     data: CategoryCreate,
+    response: Response = None,
     session_token: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
     normalized_name = normalize_category_name(data.name)
+    normalized_key = normalize_category_key(data.name)
     if not normalized_name:
         raise HTTPException(status_code=400, detail="Category name is required")
 
-    existing = await db.financial_categories.find_one(
-        {"user_id": user.user_id, "name": build_exact_name_regex(normalized_name)},
-        {"_id": 0, "category_id": 1}
-    )
+    existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(300)
+    existing = next((category for category in existing_categories if normalize_category_key(category.get("name", "")) == normalized_key), None)
     if existing:
-        raise HTTPException(status_code=409, detail="Category already exists")
+        if response is not None:
+            response.status_code = 200
+        return existing
 
     category = {
         "category_id": f"cat_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
         "name": normalized_name,
+        "name_key": normalized_key,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     try:
         await db.financial_categories.insert_one(category)
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
-            {"user_id": user.user_id, "name": build_exact_name_regex(normalized_name)},
-            {"_id": 0, "category_id": 1}
+            {"user_id": user.user_id, "name_key": normalized_key},
+            {"_id": 0}
         )
         if duplicate:
-            raise HTTPException(status_code=409, detail="Category already exists")
+            if response is not None:
+                response.status_code = 200
+            return duplicate
         logger.exception("Duplicate key while creating category %s for user %s", normalized_name, user.user_id)
-        raise HTTPException(status_code=500, detail="Error while saving category")
+        raise HTTPException(status_code=409, detail="Category already exists")
     return category
 
 @api_router.put("/finance/categories/{category_id}")
@@ -873,30 +877,21 @@ async def update_category(
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    if existing.get("name") != normalized_name:
-        duplicate = await db.financial_categories.find_one(
-            {
-                "user_id": user.user_id,
-                "name": build_exact_name_regex(normalized_name),
-                "category_id": {"$ne": category_id}
-            },
-            {"_id": 0, "category_id": 1}
-        )
+    normalized_key = normalize_category_key(data.name)
+    if normalize_category_key(existing.get("name", "")) != normalized_key:
+        existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0, "category_id": 1, "name": 1}).to_list(300)
+        duplicate = next((category for category in existing_categories if category.get("category_id") != category_id and normalize_category_key(category.get("name", "")) == normalized_key), None)
         if duplicate:
             raise HTTPException(status_code=409, detail="Category already exists")
 
     try:
         await db.financial_categories.update_one(
             {"category_id": category_id, "user_id": user.user_id},
-            {"$set": {"name": normalized_name}}
+            {"$set": {"name": normalized_name, "name_key": normalized_key}}
         )
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
-            {
-                "user_id": user.user_id,
-                "name": build_exact_name_regex(normalized_name),
-                "category_id": {"$ne": category_id}
-            },
+            {"user_id": user.user_id, "name_key": normalized_key, "category_id": {"$ne": category_id}},
             {"_id": 0, "category_id": 1}
         )
         if duplicate:
@@ -1612,7 +1607,7 @@ async def create_database_indexes():
     await db.expenses.create_index([("user_id", 1), ("month", 1)])
     await db.expenses.create_index([("user_id", 1), ("category", 1)])
     await ensure_financial_category_indexes()
-    await db.financial_categories.create_index([("user_id", 1), ("name", 1)])
+    await db.financial_categories.create_index([("user_id", 1), ("name_key", 1)], unique=True)
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
 
