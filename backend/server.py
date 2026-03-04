@@ -207,6 +207,12 @@ def normalize_quote_key(mode: str, text: str, author: str) -> str:
     return f"{clean(mode)}::{clean(text)}::{clean(author)}"
 
 
+def sanitize_mongo_document(document: dict) -> dict:
+    cleaned = dict(document)
+    cleaned.pop("_id", None)
+    return cleaned
+
+
 def get_user_timezone(user_doc: dict) -> str:
     settings = user_doc.get("settings") or {}
     tz = settings.get("timezone")
@@ -835,7 +841,7 @@ async def create_method(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.financial_methods.insert_one(method)
-    return method
+    return sanitize_mongo_document(method)
 
 # Categories
 @api_router.get("/finance/categories")
@@ -887,7 +893,7 @@ async def create_category(
             return duplicate
         logger.exception("Duplicate key while creating category %s for user %s", normalized_name, user.user_id)
         raise HTTPException(status_code=409, detail="Category already exists")
-    return category
+    return sanitize_mongo_document(category)
 
 @api_router.put("/finance/categories/{category_id}")
 async def update_category(
@@ -1018,7 +1024,7 @@ async def create_expense(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.expenses.insert_one(expense)
-    return expense
+    return sanitize_mongo_document(expense)
 
 @api_router.put("/finance/expenses/{expense_id}")
 async def update_expense(
@@ -1098,7 +1104,7 @@ async def create_income(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.incomes.insert_one(income)
-    return income
+    return sanitize_mongo_document(income)
 
 @api_router.delete("/finance/incomes/{income_id}")
 async def delete_income(
@@ -1139,7 +1145,7 @@ async def create_savings(
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     await db.savings.insert_one(savings)
-    return savings
+    return sanitize_mongo_document(savings)
 
 @api_router.put("/finance/savings/{savings_id}")
 async def update_savings(
@@ -1409,7 +1415,7 @@ async def admin_create_quote(
     }
     await db.quotes.insert_one(quote)
     quote.pop("dedupe_key", None)
-    return quote
+    return sanitize_mongo_document(quote)
 
 
 @api_router.put("/admin/quotes/{quote_id}")
