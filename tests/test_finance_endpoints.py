@@ -70,6 +70,7 @@ class FakeCollection:
         return FakeCursor(items)
 
     async def insert_one(self, doc):
+        doc.setdefault("_id", "fake_object_id")
         self.docs.append(dict(doc))
 
     async def update_one(self, query, update):
@@ -146,12 +147,14 @@ def test_methods_get_and_create(fake_backend):
 
     created = run(server.create_method(server.MethodCreate(name="Cartão corporativo")))
     assert created["name"] == "Cartão corporativo"
+    assert "_id" not in created
     assert len(fake_backend.financial_methods.docs) == len(server.DEFAULT_FINANCIAL_METHODS) + 1
 
 
 def test_categories_get_and_create_is_idempotent(fake_backend):
     created = run(server.create_category(server.CategoryCreate(name="Carro", icon="car")))
     assert created["name"] == "Carro"
+    assert "_id" not in created
 
     duplicated = run(server.create_category(server.CategoryCreate(name="Carro", icon="car")))
     assert duplicated["name"] == "Carro"
@@ -219,6 +222,7 @@ def test_expenses_get_create_and_delete(fake_backend):
         )
     )
     assert created["category"] == "Transporte"
+    assert "_id" not in created
 
     monthly = run(server.get_expenses("2026-03"))
     assert len(monthly) == 1
@@ -251,6 +255,7 @@ def test_expenses_accept_category_id_and_case_insensitive_name(fake_backend):
 def test_incomes_get_create_and_delete(fake_backend):
     created = run(server.create_income(server.IncomeCreate(name="Salário", amount=3200, month="2026-03")))
     assert created["name"] == "Salário"
+    assert "_id" not in created
 
     monthly = run(server.get_incomes("2026-03"))
     assert len(monthly) == 1
@@ -268,6 +273,7 @@ def test_savings_get_create_and_update(fake_backend):
 
     created = run(server.create_savings(server.SavingsCreate(name="Reserva", type="reserva", amount=100)))
     assert created["amount"] == 100
+    assert "_id" not in created
 
     updated = run(server.update_savings(created["savings_id"], amount=150))
     assert updated["amount"] == 150
