@@ -60,7 +60,7 @@ export default function CalendarGrid({
   };
 
   const handleDayClick = (day) => {
-    if (!day || !canToggleAnyHabitOnDay(day)) return;
+    if (!day) return;
     setSelectedDay(day);
     setIsDialogOpen(true);
   };
@@ -75,6 +75,8 @@ export default function CalendarGrid({
     const completion = completions.find((c) => c.habit_id === habitId && c.date === dateStr);
     return completion?.completed || false;
   };
+
+  const canToggleSelectedDayHabits = selectedDay ? canToggleAnyHabitOnDay(selectedDay) : false;
 
   const visibleDays = useMemo(() => {
     if (viewMode === "month") {
@@ -218,12 +220,14 @@ export default function CalendarGrid({
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: index * 0.05 }}
                         data-testid={`habit-toggle-${habit.habit_id}`}
-                        onClick={() => handleToggle(habit.habit_id)}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
+                        onClick={canToggleSelectedDayHabits ? () => handleToggle(habit.habit_id) : undefined}
+                        whileHover={canToggleSelectedDayHabits ? { scale: 1.02 } : undefined}
+                        whileTap={canToggleSelectedDayHabits ? { scale: 0.98 } : undefined}
+                        disabled={!canToggleSelectedDayHabits}
                         className={`
                           w-full p-4 rounded-xl border-2 transition-all flex items-center gap-4
                           ${completed ? 'border-primary/50 bg-primary/10 shadow-glow' : 'border-white/10 hover:border-white/20 bg-white/5'}
+                          ${canToggleSelectedDayHabits ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}
                         `}
                       >
                         <div
@@ -250,6 +254,11 @@ export default function CalendarGrid({
                     );
                   })}
                 </AnimatePresence>
+                {!canToggleSelectedDayHabits && (
+                  <p className="text-xs text-slate-400 text-center pt-1">
+                    Metas de dias passados ou futuros são apenas para visualização.
+                  </p>
+                )}
               </div>
             )}
           </div>
