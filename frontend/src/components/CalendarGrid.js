@@ -36,7 +36,13 @@ export default function CalendarGrid({
     const end = toDate(habit.end_date);
     const frequency = habit.frequency || "daily";
     const isWeekday = date.getDay() >= 1 && date.getDay() <= 5;
-    const matchesFrequency = frequency === "weekdays" ? isWeekday : true;
+    const selectedWeekdays = (habit.selected_weekdays || []).map((value) => value + 1);
+    const matchesFrequency =
+      frequency === "weekdays"
+        ? isWeekday
+        : frequency === "custom"
+          ? selectedWeekdays.includes(date.getDay())
+          : true;
     return date >= start && date <= end && matchesFrequency;
   };
 

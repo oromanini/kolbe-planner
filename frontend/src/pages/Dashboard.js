@@ -73,7 +73,13 @@ export default function Dashboard() {
           const cursor = new Date(startDate);
           while (cursor <= endDate) {
             const isWeekday = cursor.getDay() >= 1 && cursor.getDay() <= 5;
-            if (habit.frequency === 'weekdays' ? isWeekday : true) {
+            const selectedWeekdays = (habit.selected_weekdays || []).map((value) => value + 1);
+            const matchesFrequency = habit.frequency === 'weekdays'
+              ? isWeekday
+              : habit.frequency === 'custom'
+                ? selectedWeekdays.includes(cursor.getDay())
+                : true;
+            if (matchesFrequency) {
               count++;
             }
             cursor.setDate(cursor.getDate() + 1);

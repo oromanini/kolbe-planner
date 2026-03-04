@@ -17,6 +17,14 @@ const PRESET_COLORS = [
   { name: "Cyan", value: "#06B6D4" },
 ];
 
+const WEEKDAY_OPTIONS = [
+  { label: "Seg", value: 0 },
+  { label: "Ter", value: 1 },
+  { label: "Qua", value: 2 },
+  { label: "Qui", value: 3 },
+  { label: "Sex", value: 4 },
+];
+
 export default function HabitManager() {
   const navigate = useNavigate();
   const [habits, setHabits] = useState([]);
@@ -36,6 +44,7 @@ export default function HabitManager() {
     start_date: todayKey,
     end_date: todayKey,
     frequency: "daily",
+    selected_weekdays: [0, 1, 2, 3, 4],
   };
 
   const [newHabit, setNewHabit] = useState(emptyHabit);
@@ -83,6 +92,11 @@ export default function HabitManager() {
       return false;
     }
 
+    if (habitPayload.frequency === 'custom' && (!habitPayload.selected_weekdays || habitPayload.selected_weekdays.length === 0)) {
+      toast.error('Selecione pelo menos um dia da semana');
+      return false;
+    }
+
     return true;
   };
 
@@ -104,6 +118,7 @@ export default function HabitManager() {
           start_date: newHabit.start_date,
           end_date: newHabit.end_date,
           frequency: newHabit.frequency,
+          selected_weekdays: newHabit.selected_weekdays,
         }),
       });
 
@@ -130,6 +145,7 @@ export default function HabitManager() {
       start_date: habit.start_date,
       end_date: habit.end_date,
       frequency: habit.frequency || "daily",
+      selected_weekdays: habit.selected_weekdays || [0, 1, 2, 3, 4],
     });
     setShowAddForm(false);
   };
@@ -151,6 +167,7 @@ export default function HabitManager() {
           start_date: newHabit.start_date,
           end_date: newHabit.end_date,
           frequency: newHabit.frequency,
+          selected_weekdays: newHabit.selected_weekdays,
         }),
       });
 
@@ -323,12 +340,34 @@ export default function HabitManager() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewHabit({ ...newHabit, frequency: "weekdays" })}
-                    className={`px-4 py-3 rounded-xl border text-left transition-all ${newHabit.frequency === "weekdays" ? "border-primary/60 bg-primary/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}
+                    onClick={() => setNewHabit({ ...newHabit, frequency: "custom" })}
+                    className={`px-4 py-3 rounded-xl border text-left transition-all ${newHabit.frequency === "custom" ? "border-primary/60 bg-primary/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}
                   >
-                    Apenas dias úteis
+                    Selecionar dias
                   </button>
                 </div>
+                {newHabit.frequency === "custom" && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {WEEKDAY_OPTIONS.map((day) => {
+                      const isSelected = newHabit.selected_weekdays.includes(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => {
+                            const updatedDays = isSelected
+                              ? newHabit.selected_weekdays.filter((value) => value !== day.value)
+                              : [...newHabit.selected_weekdays, day.value].sort((a, b) => a - b);
+                            setNewHabit({ ...newHabit, selected_weekdays: updatedDays });
+                          }}
+                          className={`px-3 py-2 rounded-lg border text-sm transition-all ${isSelected ? "border-primary/60 bg-primary/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}
+                        >
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -433,7 +472,9 @@ export default function HabitManager() {
                       {habit.start_date} até {habit.end_date}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {habit.frequency === "weekdays" ? "Frequência: dias úteis" : "Frequência: todos os dias"}
+                      {habit.frequency === "daily"
+                        ? "Frequência: todos os dias"
+                        : `Frequência: ${WEEKDAY_OPTIONS.filter((day) => (habit.selected_weekdays || []).includes(day.value)).map((day) => day.label).join(', ') || 'dias úteis'}`}
                     </p>
                   </div>
 

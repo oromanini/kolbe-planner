@@ -70,7 +70,8 @@ class Habit(BaseModel):
     icon: str
     start_date: str  # YYYY-MM-DD format
     end_date: str  # YYYY-MM-DD format
-    frequency: Literal["daily", "weekdays"] = "daily"
+    frequency: Literal["daily", "weekdays", "custom"] = "daily"
+    selected_weekdays: List[int] = Field(default_factory=list)
     order: int
     created_at: datetime
 
@@ -100,7 +101,8 @@ class HabitCreate(BaseModel):
     icon: str = "circle"
     start_date: str
     end_date: str
-    frequency: Literal["daily", "weekdays"] = "daily"
+    frequency: Literal["daily", "weekdays", "custom"] = "daily"
+    selected_weekdays: List[int] = Field(default_factory=list)
 
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
@@ -108,7 +110,8 @@ class HabitUpdate(BaseModel):
     icon: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    frequency: Optional[Literal["daily", "weekdays"]] = None
+    frequency: Optional[Literal["daily", "weekdays", "custom"]] = None
+    selected_weekdays: Optional[List[int]] = None
     order: Optional[int] = None
 
 class CompletionToggle(BaseModel):
@@ -248,7 +251,25 @@ def is_habit_scheduled_for_date(habit: dict, selected_date: datetime) -> bool:
     frequency = habit.get("frequency") or "daily"
     if frequency == "weekdays":
         return selected_date.weekday() < 5
+    if frequency == "custom":
+        selected_weekdays = habit.get("selected_weekdays") or []
+        return selected_date.weekday() in selected_weekdays
     return True
+
+
+def sanitize_selected_weekdays(selected_weekdays: Optional[List[int]]) -> List[int]:
+    if not selected_weekdays:
+        return []
+
+    normalized_days = sorted(set(selected_weekdays))
+    if any(day < 0 or day > 4 for day in normalized_days):
+        raise HTTPException(status_code=400, detail="selected_weekdays must contain values between 0 (Seg) and 4 (Sex)")
+    return normalized_days
+
+
+def validate_frequency_selection(frequency: str, selected_weekdays: List[int]):
+    if frequency == "custom" and not selected_weekdays:
+        raise HTTPException(status_code=400, detail="Select at least one weekday for custom frequency")
 
 
 async def require_admin_user(
@@ -496,6 +517,7 @@ async def get_habits(
             habit['end_date'] = start_date
         if not habit.get('frequency'):
             habit['frequency'] = 'daily'
+        habit['selected_weekdays'] = sanitize_selected_weekdays(habit.get('selected_weekdays'))
     
     return habits
 
@@ -525,6 +547,8 @@ async def create_habit(
     user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
     today_key = get_local_day_key(get_user_timezone(user_doc or {}))
     ensure_period_is_valid(habit_data.start_date, habit_data.end_date, today_key)
+    selected_weekdays = sanitize_selected_weekdays(habit_data.selected_weekdays)
+    validate_frequency_selection(habit_data.frequency, selected_weekdays)
 
     habit = Habit(
         habit_id=f"habit_{uuid.uuid4().hex[:12]}",
@@ -535,6 +559,7 @@ async def create_habit(
         start_date=habit_data.start_date,
         end_date=habit_data.end_date,
         frequency=habit_data.frequency,
+        selected_weekdays=selected_weekdays,
         order=next_order,
         created_at=datetime.now(timezone.utc)
     )
@@ -573,6 +598,11 @@ async def update_habit(
         next_end_date = update_data.get("end_date", habit.get("end_date", next_start_date))
         ensure_period_is_valid(next_start_date, next_end_date, today_key)
 
+        next_frequency = update_data.get("frequency", habit.get("frequency", "daily"))
+        next_selected_weekdays = sanitize_selected_weekdays(update_data.get("selected_weekdays", habit.get("selected_weekdays")))
+        validate_frequency_selection(next_frequency, next_selected_weekdays)
+        update_data["selected_weekdays"] = next_selected_weekdays
+
         await db.habits.update_one(
             {"habit_id": habit_id},
             {"$set": update_data}
@@ -588,6 +618,7 @@ async def update_habit(
         updated_habit['end_date'] = updated_habit['start_date']
     if not updated_habit.get('frequency'):
         updated_habit['frequency'] = 'daily'
+    updated_habit['selected_weekdays'] = sanitize_selected_weekdays(updated_habit.get('selected_weekdays'))
 
     return Habit(**updated_habit)
 
