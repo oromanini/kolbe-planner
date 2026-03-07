@@ -30,6 +30,8 @@ const parseCurrencyInput = (value) => {
   return Number.isFinite(amount) ? amount : 0;
 };
 
+const ITEMS_PER_PAGE = 12;
+
 const getErrorMessage = (error, fallback) => {
   if (error?.name === "TypeError") {
     return "Erro de conexão. Tente novamente em instantes.";
@@ -58,15 +60,37 @@ export default function FinancialPlanner() {
   const [expenseToDelete, setExpenseToDelete] = useState(null);
   const [expenseAmountInput, setExpenseAmountInput] = useState("0,00");
   const [categoryToDelete, setCategoryToDelete] = useState(null);
-  const [newCategory, setNewCategory] = useState({ name: "" });
+  const [newCategory, setNewCategory] = useState({ name: "", type: "expense" });
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [newExpense, setNewExpense] = useState({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
   const [editingExpenseId, setEditingExpenseId] = useState(null);
-  const [newIncome, setNewIncome] = useState({ name: "", amount: 0 });
+  const [newIncome, setNewIncome] = useState({ name: "", amount: 0, category: "" });
+  const [incomeAmountInput, setIncomeAmountInput] = useState("0,00");
+  const [expensePage, setExpensePage] = useState(1);
+  const [incomePage, setIncomePage] = useState(1);
+  const [categoryPage, setCategoryPage] = useState(1);
 
   useEffect(() => {
     loadData();
   }, [currentMonth]);
+
+  useEffect(() => {
+    setExpensePage(1);
+    setIncomePage(1);
+    setCategoryPage(1);
+  }, [currentMonth]);
+
+  useEffect(() => {
+    setExpensePage((prev) => Math.min(prev, Math.max(1, Math.ceil(expenses.length / ITEMS_PER_PAGE))));
+  }, [expenses.length]);
+
+  useEffect(() => {
+    setIncomePage((prev) => Math.min(prev, Math.max(1, Math.ceil(incomes.length / ITEMS_PER_PAGE))));
+  }, [incomes.length]);
+
+  useEffect(() => {
+    setCategoryPage((prev) => Math.min(prev, Math.max(1, Math.ceil(categories.length / ITEMS_PER_PAGE))));
+  }, [categories.length]);
 
   const loadData = async () => {
     setIsLoadingFinanceData(true);
@@ -153,7 +177,15 @@ export default function FinancialPlanner() {
           return prev;
         }
 
-        const categoryStillExists = data.some((category) => category.name === prev.category);
+        const categoryStillExists = data.some((category) => (category.type || "expense") === "expense" && category.name === prev.category);
+        return categoryStillExists ? prev : { ...prev, category: "" };
+      });
+      setNewIncome((prev) => {
+        if (!prev.category) {
+          return prev;
+        }
+
+        const categoryStillExists = data.some((category) => (category.type || "expense") === "income" && category.name === prev.category);
         return categoryStillExists ? prev : { ...prev, category: "" };
       });
     } catch (error) {
@@ -257,18 +289,30 @@ export default function FinancialPlanner() {
 
   const handleAddIncome = async (e) => {
     e.preventDefault();
+    if (!newIncome.category) {
+      toast.error("Selecione uma categoria de receita");
+      return;
+    }
+
     try {
-      await apiRequest(`/finance/incomes`, {
+      const response = await apiRequest(`/finance/incomes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...newIncome, month: currentMonth }),
       });
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Erro ao adicionar entrada");
+      }
+
       toast.success("Entrada adicionada");
       setShowIncomeForm(false);
-      setNewIncome({ name: "", amount: 0 });
+      setNewIncome({ name: "", amount: 0, category: "" });
+      setIncomeAmountInput("0,00");
       loadData();
     } catch (error) {
-      toast.error("Erro ao adicionar entrada");
+      toast.error(getErrorMessage(error, "Erro ao adicionar entrada"));
     }
   };
 
@@ -303,7 +347,7 @@ export default function FinancialPlanner() {
       toast.success(isEditing ? "Categoria atualizada" : "Categoria criada");
       setShowCategoryForm(false);
       setEditingCategoryId(null);
-      setNewCategory({ name: "" });
+      setNewCategory({ name: "", type: "expense" });
       if (isEditing) {
         setCategories((prev) => prev.map((category) => (
           category.category_id === editingCategoryId ? savedCategory : category
@@ -323,7 +367,7 @@ export default function FinancialPlanner() {
   const handleStartEditCategory = (category) => {
     setShowCategoryForm(true);
     setEditingCategoryId(category.category_id);
-    setNewCategory({ name: category.name });
+    setNewCategory({ name: category.name, type: category.type || "expense" });
   };
 
   const requestCategoryDelete = async (category) => {
@@ -345,6 +389,7 @@ export default function FinancialPlanner() {
       toast.success("Categoria excluída");
       setCategories((prev) => prev.filter((item) => item.category_id !== category.category_id));
       setNewExpense((prev) => (prev.category === category.name ? { ...prev, category: "" } : prev));
+      setNewIncome((prev) => (prev.category === category.name ? { ...prev, category: "" } : prev));
       refreshCategories();
       loadData();
     } catch (error) {
@@ -367,7 +412,9 @@ export default function FinancialPlanner() {
       toast.success("Categoria e itens associados excluídos");
       setCategories((prev) => prev.filter((item) => item.category_id !== categoryToDelete.category_id));
       setExpenses((prev) => prev.filter((expense) => expense.category !== categoryToDelete.name));
+      setIncomes((prev) => prev.filter((income) => income.category !== categoryToDelete.name));
       setNewExpense((prev) => (prev.category === categoryToDelete.name ? { ...prev, category: "" } : prev));
+      setNewIncome((prev) => (prev.category === categoryToDelete.name ? { ...prev, category: "" } : prev));
       setCategoryToDelete(null);
       refreshCategories();
       loadData();
@@ -377,6 +424,17 @@ export default function FinancialPlanner() {
   };
 
   const chartData = summary?.category_breakdown ? Object.entries(summary.category_breakdown).map(([name, value]) => ({ name, value })) : [];
+
+  const expenseCategories = categories.filter((category) => (category.type || "expense") === "expense");
+  const incomeCategories = categories.filter((category) => (category.type || "expense") === "income");
+
+  const paginatedExpenses = expenses.slice((expensePage - 1) * ITEMS_PER_PAGE, expensePage * ITEMS_PER_PAGE);
+  const paginatedIncomes = incomes.slice((incomePage - 1) * ITEMS_PER_PAGE, incomePage * ITEMS_PER_PAGE);
+  const paginatedCategories = categories.slice((categoryPage - 1) * ITEMS_PER_PAGE, categoryPage * ITEMS_PER_PAGE);
+
+  const totalExpensePages = Math.max(1, Math.ceil(expenses.length / ITEMS_PER_PAGE));
+  const totalIncomePages = Math.max(1, Math.ceil(incomes.length / ITEMS_PER_PAGE));
+  const totalCategoryPages = Math.max(1, Math.ceil(categories.length / ITEMS_PER_PAGE));
 
   const COLORS = ["#CD1C33", "#D4AF37", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B"];
 
@@ -499,7 +557,7 @@ export default function FinancialPlanner() {
                 onClick={() => {
                   setShowCategoryForm(!showCategoryForm);
                   setEditingCategoryId(null);
-                  setNewCategory({ name: "" });
+                  setNewCategory({ name: "", type: "expense" });
                 }}
                 className="p-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-all"
               >
@@ -516,6 +574,15 @@ export default function FinancialPlanner() {
                   className="w-full px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
                   required
                 />
+                <select
+                  value={newCategory.type}
+                  onChange={(e) => setNewCategory({ ...newCategory, type: e.target.value })}
+                  className="w-full px-4 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+                  required
+                >
+                  <option value="expense">Despesa</option>
+                  <option value="income">Receita</option>
+                </select>
                 <div className="flex gap-2">
                   <button
                     type="submit"
@@ -536,7 +603,7 @@ export default function FinancialPlanner() {
                     onClick={() => {
                       setShowCategoryForm(false);
                       setEditingCategoryId(null);
-                      setNewCategory({ name: "" });
+                      setNewCategory({ name: "", type: "expense" });
                     }}
                     className="px-4 py-2 border border-white/20 rounded-full"
                   >
@@ -556,12 +623,12 @@ export default function FinancialPlanner() {
                   />
                   <span>Carregando categorias...</span>
                 </div>
-              ) : categories.map((category) => {
+              ) : paginatedCategories.map((category) => {
                 return (
                   <div key={category.category_id} className="glass-card p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <Receipt className="w-4 h-4 text-primary" />
-                      <p className="font-medium text-white">{category.name}</p>
+                      <p className="font-medium text-white">{category.name} <span className="text-xs text-slate-400">({(category.type || "expense") === "income" ? "Receita" : "Despesa"})</span></p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => handleStartEditCategory(category)} className="p-1.5 rounded-md hover:bg-white/5">
@@ -575,9 +642,140 @@ export default function FinancialPlanner() {
                 );
               })}
             </div>
+            {!isLoadingCategories && totalCategoryPages > 1 && (
+              <div className="flex items-center justify-between mt-4 text-sm text-slate-300">
+                <button
+                  onClick={() => setCategoryPage((prev) => Math.max(1, prev - 1))}
+                  disabled={categoryPage === 1}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <span>Página {categoryPage} de {totalCategoryPages}</span>
+                <button
+                  onClick={() => setCategoryPage((prev) => Math.min(totalCategoryPages, prev + 1))}
+                  disabled={categoryPage === totalCategoryPages}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Próxima
+                </button>
+              </div>
+            )}
           </div>
 
           <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-heading text-2xl font-medium text-white">Receitas</h2>
+              <button
+                onClick={() => {
+                  if (!showIncomeForm) {
+                    setNewIncome({ name: "", amount: 0, category: "" });
+                    setIncomeAmountInput("0,00");
+                  }
+                  setShowIncomeForm(!showIncomeForm);
+                }}
+                className="p-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-all"
+              >
+                <Plus className="w-5 h-5 text-primary" />
+              </button>
+            </div>
+
+            {showIncomeForm && (
+              <form onSubmit={handleAddIncome} className="glass-card p-6 mb-6 space-y-4">
+                <input
+                  placeholder="Nome"
+                  value={newIncome.name}
+                  onChange={(e) => setNewIncome({ ...newIncome, name: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+                  required
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Valor"
+                  value={incomeAmountInput}
+                  onChange={(e) => {
+                    const formatted = formatCurrencyInput(e.target.value);
+                    setIncomeAmountInput(formatted);
+                    setNewIncome({ ...newIncome, amount: parseCurrencyInput(formatted) });
+                  }}
+                  className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+                  required
+                />
+                <select
+                  value={newIncome.category}
+                  onChange={(e) => setNewIncome({ ...newIncome, category: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
+                  required
+                  disabled={!incomeCategories.length}
+                >
+                  <option value="">Selecione uma categoria de receita</option>
+                  {incomeCategories.map((category) => (
+                    <option key={category.category_id} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                {!incomeCategories.length && (
+                  <p className="text-sm text-amber-300">Cadastre ao menos uma categoria do tipo receita.</p>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    type="submit"
+                    disabled={!incomeCategories.length}
+                    className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    Adicionar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowIncomeForm(false);
+                      setNewIncome({ name: "", amount: 0, category: "" });
+                      setIncomeAmountInput("0,00");
+                    }}
+                    className="px-6 py-3 border border-white/20 rounded-full"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="space-y-3 mb-8">
+              {paginatedIncomes.map((income) => (
+                <div key={income.income_id} className="glass-card p-4 flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-white">{income.name}</p>
+                    <p className="text-sm text-slate-400 flex items-center gap-2">
+                      <Receipt className="w-3.5 h-3.5" />
+                      {income.category || "Sem categoria"}
+                    </p>
+                  </div>
+                  <p className="font-heading text-xl text-primary">R$ {income.amount.toFixed(2)}</p>
+                </div>
+              ))}
+            </div>
+            {totalIncomePages > 1 && (
+              <div className="flex items-center justify-between mb-8 text-sm text-slate-300">
+                <button
+                  onClick={() => setIncomePage((prev) => Math.max(1, prev - 1))}
+                  disabled={incomePage === 1}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <span>Página {incomePage} de {totalIncomePages}</span>
+                <button
+                  onClick={() => setIncomePage((prev) => Math.min(totalIncomePages, prev + 1))}
+                  disabled={incomePage === totalIncomePages}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Próxima
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-heading text-2xl font-medium text-white">Gastos</h2>
               <button
@@ -635,22 +833,22 @@ export default function FinancialPlanner() {
                   onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })}
                   className="w-full px-4 py-3 bg-slate-950/50 border border-white/10 rounded-lg text-white"
                   required
-                  disabled={!categories.length}
+                  disabled={!expenseCategories.length}
                 >
                   <option value="">Selecione uma categoria</option>
-                  {categories.map((category) => (
+                  {expenseCategories.map((category) => (
                     <option key={category.category_id} value={category.name}>
                       {category.name}
                     </option>
                   ))}
                 </select>
-                {!categories.length && (
-                  <p className="text-sm text-amber-300">Cadastre uma categoria antes de adicionar gastos.</p>
+                {!expenseCategories.length && (
+                  <p className="text-sm text-amber-300">Cadastre uma categoria de despesa antes de adicionar gastos.</p>
                 )}
                 <div className="flex gap-3">
                   <button
                     type="submit"
-                    disabled={isSubmittingExpense || !categories.length || !methods.length}
+                    disabled={isSubmittingExpense || !expenseCategories.length || !methods.length}
                     className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isSubmittingExpense ? (<>
@@ -689,7 +887,7 @@ export default function FinancialPlanner() {
                   />
                   <span>Carregando gastos...</span>
                 </div>
-              ) : expenses.map((exp) => {
+              ) : paginatedExpenses.map((exp) => {
                 return (
                   <div key={exp.expense_id} className="glass-card p-4 flex items-center justify-between">
                     <div>
@@ -712,6 +910,25 @@ export default function FinancialPlanner() {
                 );
               })}
             </div>
+            {!isLoadingExpenses && totalExpensePages > 1 && (
+              <div className="flex items-center justify-between mt-4 text-sm text-slate-300">
+                <button
+                  onClick={() => setExpensePage((prev) => Math.max(1, prev - 1))}
+                  disabled={expensePage === 1}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Anterior
+                </button>
+                <span>Página {expensePage} de {totalExpensePages}</span>
+                <button
+                  onClick={() => setExpensePage((prev) => Math.min(totalExpensePages, prev + 1))}
+                  disabled={expensePage === totalExpensePages}
+                  className="px-3 py-1 rounded border border-white/20 disabled:opacity-40"
+                >
+                  Próxima
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="glass-card p-6">
