@@ -706,6 +706,7 @@ export default function FinancialPlanner() {
             )}
           </div>
 
+          <div className="lg:col-span-2 grid gap-8 xl:grid-cols-2">
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-heading text-2xl font-medium text-white">Receitas</h2>
@@ -819,6 +820,9 @@ export default function FinancialPlanner() {
               </div>
             )}
 
+          </div>
+
+          <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-heading text-2xl font-medium text-white">Gastos</h2>
               <button
@@ -973,7 +977,7 @@ export default function FinancialPlanner() {
               </div>
             )}
           </div>
-
+          </div>
           </div>
         ) : (
           <div className="space-y-6">
