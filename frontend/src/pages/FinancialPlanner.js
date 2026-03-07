@@ -69,6 +69,7 @@ export default function FinancialPlanner() {
   const [expensePage, setExpensePage] = useState(1);
   const [incomePage, setIncomePage] = useState(1);
   const [categoryPage, setCategoryPage] = useState(1);
+  const [activeFinanceTab, setActiveFinanceTab] = useState("lancamentos");
 
   useEffect(() => {
     loadData();
@@ -537,8 +538,28 @@ export default function FinancialPlanner() {
           </motion.div>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-8">
-          <div>
+        <div className="mb-6 flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-1 w-fit">
+          <button
+            onClick={() => setActiveFinanceTab("lancamentos")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeFinanceTab === "lancamentos" ? "bg-primary text-white" : "text-slate-300 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            Categorias, Receitas e Despesas
+          </button>
+          <button
+            onClick={() => setActiveFinanceTab("graficos")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeFinanceTab === "graficos" ? "bg-primary text-white" : "text-slate-300 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            Gráficos
+          </button>
+        </div>
+
+        {activeFinanceTab === "lancamentos" ? (
+          <div className="grid lg:grid-cols-3 gap-8">
+            <div>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <h2 className="font-heading text-2xl font-medium text-white">Categorias</h2>
@@ -931,6 +952,8 @@ export default function FinancialPlanner() {
             )}
           </div>
 
+          </div>
+        ) : (
           <div className="glass-card p-6">
             <h2 className="font-heading text-2xl font-medium text-white mb-6">Distribuição por Categoria</h2>
             {chartData.length > 0 ? (
@@ -949,7 +972,7 @@ export default function FinancialPlanner() {
               <p className="text-slate-400 text-center py-12">Nenhum gasto cadastrado</p>
             )}
           </div>
-        </div>
+        )}
       </main>
 
       {expenseToDelete && (
