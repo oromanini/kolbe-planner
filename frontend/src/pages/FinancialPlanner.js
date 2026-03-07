@@ -14,7 +14,19 @@ import {
   Target,
   Landmark,
 } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Legend,
+  Tooltip,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
 import { toast } from "sonner";
 import { apiRequest, checkApiHealth } from "@/lib/api";
 
@@ -29,6 +41,8 @@ const parseCurrencyInput = (value) => {
   const amount = Number(normalized);
   return Number.isFinite(amount) ? amount : 0;
 };
+
+const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2)}`;
 
 const ITEMS_PER_PAGE = 12;
 
@@ -425,6 +439,14 @@ export default function FinancialPlanner() {
   };
 
   const chartData = summary?.category_breakdown ? Object.entries(summary.category_breakdown).map(([name, value]) => ({ name, value })) : [];
+  const comparativeData = [
+    { label: "Receitas", amount: Number(summary?.total_income || 0) },
+    { label: "Despesas", amount: Number(summary?.total_expenses || 0) },
+  ];
+  const comparativeBalance = comparativeData[0].amount - comparativeData[1].amount;
+  const expenseCoverage = comparativeData[0].amount > 0
+    ? (comparativeData[1].amount / comparativeData[0].amount) * 100
+    : 0;
 
   const expenseCategories = categories.filter((category) => (category.type || "expense") === "expense");
   const incomeCategories = categories.filter((category) => (category.type || "expense") === "income");
@@ -954,23 +976,73 @@ export default function FinancialPlanner() {
 
           </div>
         ) : (
-          <div className="glass-card p-6">
-            <h2 className="font-heading text-2xl font-medium text-white mb-6">Distribuição por Categoria</h2>
-            {chartData.length > 0 ? (
+          <div className="space-y-6">
+            <div className="glass-card p-6">
+              <h2 className="font-heading text-2xl font-medium text-white mb-6">Distribuição por Categoria</h2>
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie data={chartData} cx="50%" cy="50%" outerRadius={100} fill="#8884d8" dataKey="value" label>
+                      {chartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-slate-400 text-center py-12">Nenhum gasto cadastrado</p>
+              )}
+            </div>
+
+            <div className="glass-card p-6">
+              <h2 className="font-heading text-2xl font-medium text-white mb-6">Comparativo: Receitas x Despesas</h2>
               <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie data={chartData} cx="50%" cy="50%" outerRadius={100} fill="#8884d8" dataKey="value" label>
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                <BarChart data={comparativeData} margin={{ top: 12, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis dataKey="label" stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" tickFormatter={(value) => `R$ ${Number(value).toFixed(0)}`} />
+                  <Tooltip formatter={(value) => formatCurrency(value)} />
+                  <Bar dataKey="amount" radius={[8, 8, 0, 0]}>
+                    {comparativeData.map((entry, index) => (
+                      <Cell key={`bar-${entry.label}`} fill={index === 0 ? "#10B981" : "#CD1C33"} />
                     ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
-            ) : (
-              <p className="text-slate-400 text-center py-12">Nenhum gasto cadastrado</p>
-            )}
+
+              <div className="mt-6 overflow-x-auto">
+                <table className="w-full text-sm text-left border border-white/10 rounded-xl overflow-hidden">
+                  <thead className="bg-white/5 text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Indicador</th>
+                      <th className="px-4 py-3 font-medium">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-3 text-slate-300">Receitas</td>
+                      <td className="px-4 py-3 text-emerald-400 font-medium">{formatCurrency(comparativeData[0].amount)}</td>
+                    </tr>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-3 text-slate-300">Despesas</td>
+                      <td className="px-4 py-3 text-secondary font-medium">{formatCurrency(comparativeData[1].amount)}</td>
+                    </tr>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-3 text-slate-300">Saldo</td>
+                      <td className={`px-4 py-3 font-medium ${comparativeBalance >= 0 ? "text-emerald-400" : "text-secondary"}`}>
+                        {formatCurrency(comparativeBalance)}
+                      </td>
+                    </tr>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-3 text-slate-300">Despesas / Receitas</td>
+                      <td className="px-4 py-3 text-white font-medium">{expenseCoverage.toFixed(1)}%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
       </main>
