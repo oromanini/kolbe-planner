@@ -681,6 +681,7 @@ class FinancialCategory(BaseModel):
     category_id: str
     user_id: str
     name: str
+    type: Literal["expense", "income"] = "expense"
     created_at: datetime
 
 class Expense(BaseModel):
@@ -701,6 +702,7 @@ class Income(BaseModel):
     user_id: str
     name: str
     amount: float
+    category: Optional[str] = None
     month: str  # YYYY-MM
     created_at: datetime
 
@@ -734,6 +736,7 @@ class ExpenseUpdate(BaseModel):
 class IncomeCreate(BaseModel):
     name: str
     amount: float
+    category: str
     month: str
 
 class SavingsCreate(BaseModel):
@@ -797,25 +800,36 @@ async def ensure_financial_category_indexes() -> None:
             continue
 
         keys = [tuple(entry) for entry in index_meta.get("key", [])]
-        if index_meta.get("unique") and keys == [("user_id", 1)]:
+        if index_meta.get("unique") and keys in ([("user_id", 1)], [("user_id", 1), ("name_key", 1)]):
             await db.financial_categories.drop_index(index_name)
+
+    await db.financial_categories.update_many(
+        {"type": {"$exists": False}},
+        {"$set": {"type": "expense"}}
+    )
 
 
 class CategoryCreate(BaseModel):
     name: str
+    type: Literal["expense", "income"] = "expense"
 
 class CategoryUpdate(BaseModel):
     name: str
+    type: Literal["expense", "income"] = "expense"
 
 
-async def resolve_user_category_name(user_id: str, raw_category: str) -> Optional[str]:
+async def resolve_user_category_name(user_id: str, raw_category: str, expected_type: Optional[str] = None) -> Optional[str]:
     """Resolve category payload to the canonical category name stored for the user."""
     category_value = (raw_category or "").strip()
     if not category_value:
         return None
 
+    base_query = {"user_id": user_id}
+    if expected_type:
+        base_query["type"] = expected_type
+
     by_id = await db.financial_categories.find_one(
-        {"user_id": user_id, "category_id": category_value},
+        {**base_query, "category_id": category_value},
         {"_id": 0, "name": 1},
     )
     if by_id and by_id.get("name"):
@@ -823,14 +837,14 @@ async def resolve_user_category_name(user_id: str, raw_category: str) -> Optiona
 
     normalized_key = normalize_category_key(category_value)
     by_key = await db.financial_categories.find_one(
-        {"user_id": user_id, "name_key": normalized_key},
+        {**base_query, "name_key": normalized_key},
         {"_id": 0, "name": 1},
     )
     if by_key and by_key.get("name"):
         return by_key["name"]
 
     by_exact_name = await db.financial_categories.find_one(
-        {"user_id": user_id, "name": category_value},
+        {**base_query, "name": category_value},
         {"_id": 0, "name": 1},
     )
     if by_exact_name and by_exact_name.get("name"):
@@ -881,7 +895,7 @@ async def get_categories(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
-    categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
+    categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
     return categories
 
 @api_router.post("/finance/categories", status_code=201)
@@ -897,8 +911,12 @@ async def create_category(
     if not normalized_name:
         raise HTTPException(status_code=400, detail="Category name is required")
 
-    existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(300)
-    existing = next((category for category in existing_categories if normalize_category_key(category.get("name", "")) == normalized_key), None)
+    existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
+    existing = next((
+        category
+        for category in existing_categories
+        if category.get("type", "expense") == data.type and normalize_category_key(category.get("name", "")) == normalized_key
+    ), None)
     if existing:
         if response is not None:
             response.status_code = 200
@@ -909,13 +927,14 @@ async def create_category(
         "user_id": user.user_id,
         "name": normalized_name,
         "name_key": normalized_key,
+        "type": data.type,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     try:
         await db.financial_categories.insert_one(category)
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
-            {"user_id": user.user_id, "name_key": normalized_key},
+            {"user_id": user.user_id, "name_key": normalized_key, "type": data.type},
             {"_id": 0}
         )
         if duplicate:
@@ -946,20 +965,27 @@ async def update_category(
         raise HTTPException(status_code=404, detail="Category not found")
 
     normalized_key = normalize_category_key(data.name)
-    if normalize_category_key(existing.get("name", "")) != normalized_key:
-        existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0, "category_id": 1, "name": 1}).to_list(300)
-        duplicate = next((category for category in existing_categories if category.get("category_id") != category_id and normalize_category_key(category.get("name", "")) == normalized_key), None)
+    existing_type = existing.get("type", "expense")
+    if normalize_category_key(existing.get("name", "")) != normalized_key or existing_type != data.type:
+        existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0, "category_id": 1, "name": 1, "type": 1}).to_list(1000)
+        duplicate = next((
+            category
+            for category in existing_categories
+            if category.get("category_id") != category_id
+            and category.get("type", "expense") == data.type
+            and normalize_category_key(category.get("name", "")) == normalized_key
+        ), None)
         if duplicate:
             raise HTTPException(status_code=409, detail="Category already exists")
 
     try:
         await db.financial_categories.update_one(
             {"category_id": category_id, "user_id": user.user_id},
-            {"$set": {"name": normalized_name, "name_key": normalized_key}}
+            {"$set": {"name": normalized_name, "name_key": normalized_key, "type": data.type}}
         )
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
-            {"user_id": user.user_id, "name_key": normalized_key, "category_id": {"$ne": category_id}},
+            {"user_id": user.user_id, "name_key": normalized_key, "type": data.type, "category_id": {"$ne": category_id}},
             {"_id": 0, "category_id": 1}
         )
         if duplicate:
@@ -972,10 +998,16 @@ async def update_category(
         raise HTTPException(status_code=500, detail="Error while saving category")
 
     if existing.get("name") != normalized_name:
-        await db.expenses.update_many(
-            {"user_id": user.user_id, "category": existing.get("name")},
-            {"$set": {"category": normalized_name}}
-        )
+        if existing_type == "income":
+            await db.incomes.update_many(
+                {"user_id": user.user_id, "category": existing.get("name")},
+                {"$set": {"category": normalized_name}}
+            )
+        else:
+            await db.expenses.update_many(
+                {"user_id": user.user_id, "category": existing.get("name")},
+                {"$set": {"category": normalized_name}}
+            )
 
     category = await db.financial_categories.find_one(
         {"category_id": category_id, "user_id": user.user_id},
@@ -998,7 +1030,10 @@ async def delete_category(
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    linked_items_count = await db.expenses.count_documents({
+    category_type = category.get("type", "expense")
+    collection = db.incomes if category_type == "income" else db.expenses
+
+    linked_items_count = await collection.count_documents({
         "user_id": user.user_id,
         "category": category["name"]
     })
@@ -1014,9 +1049,9 @@ async def delete_category(
 
     await db.financial_categories.delete_one({"category_id": category_id, "user_id": user.user_id})
     if linked_items_count > 0:
-        await db.expenses.delete_many({"user_id": user.user_id, "category": category["name"]})
+        await collection.delete_many({"user_id": user.user_id, "category": category["name"]})
 
-    return {"message": "Category deleted", "deleted_expenses": linked_items_count}
+    return {"message": "Category deleted", "deleted_items": linked_items_count}
 
 # Expenses
 @api_router.get("/finance/expenses")
@@ -1029,7 +1064,7 @@ async def get_expenses(
     expenses = await db.expenses.find(
         {"user_id": user.user_id, "month": month},
         {"_id": 0}
-    ).to_list(1000)
+    ).to_list(5000)
     return expenses
 
 @api_router.post("/finance/expenses", status_code=201)
@@ -1039,7 +1074,7 @@ async def create_expense(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
-    resolved_category_name = await resolve_user_category_name(user.user_id, data.category)
+    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="expense")
     if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
@@ -1066,7 +1101,7 @@ async def update_expense(
 ):
     user = await get_current_user(session_token, authorization)
 
-    resolved_category_name = await resolve_user_category_name(user.user_id, data.category)
+    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="expense")
     if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
@@ -1116,7 +1151,7 @@ async def get_incomes(
     incomes = await db.incomes.find(
         {"user_id": user.user_id, "month": month},
         {"_id": 0}
-    ).to_list(1000)
+    ).to_list(5000)
     return incomes
 
 @api_router.post("/finance/incomes", status_code=201)
@@ -1126,11 +1161,16 @@ async def create_income(
     authorization: Optional[str] = Header(None)
 ):
     user = await get_current_user(session_token, authorization)
+    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="income")
+    if not resolved_category_name:
+        raise HTTPException(status_code=400, detail="Invalid income category")
+
     income = {
         "income_id": f"inc_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
         "name": data.name,
         "amount": data.amount,
+        "category": resolved_category_name,
         "month": data.month,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
@@ -1669,7 +1709,7 @@ async def create_database_indexes():
     await db.expenses.create_index([("user_id", 1), ("month", 1)])
     await db.expenses.create_index([("user_id", 1), ("category", 1)])
     await ensure_financial_category_indexes()
-    await db.financial_categories.create_index([("user_id", 1), ("name_key", 1)], unique=True)
+    await db.financial_categories.create_index([("user_id", 1), ("type", 1), ("name_key", 1)], unique=True)
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
 
