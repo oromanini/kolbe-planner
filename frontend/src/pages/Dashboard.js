@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Settings, LogOut, LayoutDashboard, Target, L
 import CalendarGrid from "../components/CalendarGrid";
 import ProgressStats from "../components/ProgressStats";
 import TutorialModal from "../components/TutorialModal";
+import NotificationBell from "../components/NotificationBell";
 import { toast } from "sonner";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -325,6 +326,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
+            <NotificationBell />
             <button
               onClick={() => navigate('/habits')}
               data-testid="quick-goals-button"

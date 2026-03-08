@@ -13,6 +13,9 @@ import uuid
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
+import re
+import smtplib
+from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 ROOT_DIR = Path(__file__).parent
@@ -138,6 +141,16 @@ class QuoteImportPayload(BaseModel):
 
 class QuoteBulkDeletePayload(BaseModel):
     ids: List[str]
+
+
+class NotificationItem(BaseModel):
+    id: str
+    dedupe_key: str
+    type: Literal["deadline", "late", "month_review"]
+    source: Literal["goals", "finance"] = "goals"
+    tone: Literal["info", "warning", "danger"] = "info"
+    message: str
+    created_at: str
 
 
 # ============ AUTH HELPER ============
@@ -270,6 +283,141 @@ def sanitize_selected_weekdays(selected_weekdays: Optional[List[int]]) -> List[i
 def validate_frequency_selection(frequency: str, selected_weekdays: List[int]):
     if frequency == "custom" and not selected_weekdays:
         raise HTTPException(status_code=400, detail="Select at least one weekday for custom frequency")
+
+def compose_goal_notifications(habits: List[dict], completions: List[dict], now_local: datetime) -> List[dict]:
+    notifications: List[dict] = []
+    today_key = now_local.strftime("%Y-%m-%d")
+    today = datetime.strptime(today_key, "%Y-%m-%d")
+
+    for habit in habits:
+        habit_id = habit.get("habit_id")
+        name = (habit.get("name") or "seu objetivo").strip()
+        start_key = habit.get("start_date")
+        end_key = habit.get("end_date")
+
+        if not start_key or not end_key:
+            continue
+
+        try:
+            start_date = parse_day_key(start_key)
+            end_date = parse_day_key(end_key)
+        except HTTPException:
+            continue
+
+        days_remaining = (end_date - today).days
+        if 1 <= days_remaining <= 3 and today >= start_date:
+            message = f"Faltam {days_remaining} dias para concluir o objetivo {name}."
+            notifications.append({
+                "id": f"goal-deadline-{habit_id}-{today_key}",
+                "dedupe_key": f"goal_deadline:{habit_id}:{days_remaining}:{today_key}",
+                "type": "deadline",
+                "source": "goals",
+                "tone": "warning",
+                "message": message,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+
+        if now_local.hour >= 23 and today_key >= start_key and today_key <= end_key and is_habit_scheduled_for_date(habit, today):
+            completion_for_today = next((comp for comp in completions if comp.get("habit_id") == habit_id and comp.get("date") == today_key), None)
+            if not (completion_for_today and completion_for_today.get("completed")):
+                message = f"Já são 23h e você ainda não concluiu o objetivo {name} hoje."
+                notifications.append({
+                    "id": f"goal-late-{habit_id}-{today_key}",
+                    "dedupe_key": f"goal_late:{habit_id}:{today_key}",
+                    "type": "late",
+                    "source": "goals",
+                    "tone": "danger",
+                    "message": message,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    if now_local.day == 1:
+        notifications.append({
+            "id": f"month-review-goals-{today_key}",
+            "dedupe_key": f"month_review:goals:{today_key}",
+            "type": "month_review",
+            "source": "goals",
+            "tone": "info",
+            "message": "Hoje é dia 1: revise e ajuste suas metas do mês para manter o foco.",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        notifications.append({
+            "id": f"month-review-finance-{today_key}",
+            "dedupe_key": f"month_review:finance:{today_key}",
+            "type": "month_review",
+            "source": "finance",
+            "tone": "info",
+            "message": "Começo do mês: revise seu planejamento financeiro e atualize orçamento e categorias.",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    return notifications
+
+
+async def persist_notifications(user_id: str, items: List[dict]) -> List[dict]:
+    if not items:
+        return []
+
+    new_items: List[dict] = []
+    for item in items:
+        record = {
+            **item,
+            "user_id": user_id,
+        }
+        existing = await db.notifications.find_one({"user_id": user_id, "dedupe_key": item["dedupe_key"]}, {"_id": 0, "id": 1})
+        if existing:
+            continue
+
+        await db.notifications.insert_one(record)
+        new_items.append(sanitize_mongo_document(record))
+
+    return new_items
+
+
+def _build_notification_email_html(user_name: str, items: List[dict]) -> str:
+    rows = "".join([f"<li>{item['message']}</li>" for item in items])
+    return f"""
+    <html>
+      <body>
+        <p>Olá, {user_name}!</p>
+        <p>Você recebeu novos alertas no Kolbe Planner:</p>
+        <ul>{rows}</ul>
+        <p>Abra o planner para acompanhar e ajustar suas metas.</p>
+      </body>
+    </html>
+    """
+
+
+async def dispatch_email_notifications(user: User, items: List[dict]) -> bool:
+    host = os.environ.get("SMTP_HOST")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    sender = os.environ.get("SMTP_FROM_EMAIL")
+    username = os.environ.get("SMTP_USERNAME")
+    password = os.environ.get("SMTP_PASSWORD")
+
+    if not host or not sender or not username or not password:
+        logger.info("SMTP not configured; skipping email notifications for user %s", user.user_id)
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "Notificações do Kolbe Planner"
+    message["From"] = sender
+    message["To"] = user.email
+    plain_text = "\n".join([f"- {item['message']}" for item in items])
+    message.set_content(f"Olá, {user.name}!\n\nVocê recebeu novos alertas:\n{plain_text}")
+    message.add_alternative(_build_notification_email_html(user.name, items), subtype="html")
+
+    try:
+        with smtplib.SMTP(host=host, port=port, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(username, password)
+            smtp.send_message(message)
+    except Exception as exc:
+        logger.exception("Failed to send notification email for user %s: %s", user.user_id, exc)
+        return False
+
+    return True
+
 
 
 async def require_admin_user(
@@ -1392,6 +1540,57 @@ async def toggle_completion(
         return {"completed": True}
 
 
+# ============ NOTIFICATIONS ENDPOINTS ============
+
+@api_router.get("/notifications")
+async def get_notifications(
+    limit: int = Query(30, ge=1, le=100),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    items = await db.notifications.find(
+        {"user_id": user.user_id},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return items
+
+
+@api_router.post("/notifications/refresh")
+async def refresh_notifications(
+    send_email: bool = True,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+    tz_name = get_user_timezone(user_doc or {})
+
+    try:
+        now_local = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now_local = datetime.now(timezone.utc)
+
+    start_key = now_local.replace(day=1).strftime("%Y-%m-%d")
+    end_key = (now_local + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    habits = await db.habits.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
+    completions = await db.habit_completions.find(
+        {"user_id": user.user_id, "date": {"$gte": start_key, "$lt": end_key}},
+        {"_id": 0}
+    ).to_list(200)
+
+    generated = compose_goal_notifications(habits, completions, now_local)
+    new_items = await persist_notifications(user.user_id, generated)
+
+    email_sent = False
+    if send_email and new_items:
+        email_sent = await dispatch_email_notifications(user, new_items)
+
+    items = await db.notifications.find({"user_id": user.user_id}, {"_id": 0}).sort("created_at", -1).limit(30).to_list(30)
+    return {"items": items, "email_sent": email_sent, "created_count": len(new_items)}
+
+
 # ============ ADMIN ENDPOINTS ============
 
 @api_router.get("/admin/users")
@@ -1712,6 +1911,8 @@ async def create_database_indexes():
     await db.financial_categories.create_index([("user_id", 1), ("type", 1), ("name_key", 1)], unique=True)
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("dedupe_key", 1)], unique=True)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

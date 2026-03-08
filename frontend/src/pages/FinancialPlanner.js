@@ -29,6 +29,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { apiRequest, checkApiHealth } from "@/lib/api";
+import NotificationBell from "../components/NotificationBell";
 
 const formatCurrencyInput = (value) => {
   const digits = String(value || "").replace(/\D/g, "");
@@ -499,6 +500,7 @@ export default function FinancialPlanner() {
           </div>
 
           <div className="flex items-center gap-3">
+            <NotificationBell />
             <div className="hidden md:flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl p-1">
               <button
                 onClick={() => navigate('/dashboard')}
