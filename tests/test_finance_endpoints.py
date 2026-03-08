@@ -405,12 +405,12 @@ def test_invoice_reader_prefers_ai_as_primary_parser(fake_backend, monkeypatch):
     assert fake_backend.expenses.docs[0]["name"] == "AI ITEM"
 
 
-def test_invoice_reader_uses_regex_when_ai_total_is_worse(fake_backend, monkeypatch):
+def test_invoice_reader_fails_when_ai_total_does_not_match(fake_backend, monkeypatch):
     fake_backend.financial_methods.docs.append({"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"})
+    fake_backend.invoice_reader_jobs.docs.append({"job_id": "job_2", "user_id": "user_1", "status": "queued"})
 
     monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
     monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 100.00)
-    monkeypatch.setattr(server, "extract_invoice_items", lambda _txt: [{"name": "REGEX ITEM", "amount": 100.00}])
     monkeypatch.setattr(
         server,
         "extract_invoice_items_with_ai",
@@ -419,5 +419,23 @@ def test_invoice_reader_uses_regex_when_ai_total_is_worse(fake_backend, monkeypa
 
     run(server.process_invoice_reader_job("job_2", "user_1", "2026-03", "fat.pdf", b"pdf"))
 
-    assert len(fake_backend.expenses.docs) == 1
-    assert fake_backend.expenses.docs[0]["name"] == "REGEX ITEM"
+    assert len(fake_backend.expenses.docs) == 0
+    job = next(doc for doc in fake_backend.invoice_reader_jobs.docs if doc.get("job_id") == "job_2")
+    assert job["status"] == "failed"
+    assert "Adicione os gastos manualmente" in job["errors"][0]
+
+
+def test_invoice_reader_fails_when_ai_returns_no_items(fake_backend, monkeypatch):
+    fake_backend.financial_methods.docs.append({"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"})
+    fake_backend.invoice_reader_jobs.docs.append({"job_id": "job_3", "user_id": "user_1", "status": "queued"})
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
+    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 100.00)
+    monkeypatch.setattr(server, "extract_invoice_items_with_ai", lambda _txt, _expected=None: [])
+
+    run(server.process_invoice_reader_job("job_3", "user_1", "2026-03", "fat.pdf", b"pdf"))
+
+    assert len(fake_backend.expenses.docs) == 0
+    job = next(doc for doc in fake_backend.invoice_reader_jobs.docs if doc.get("job_id") == "job_3")
+    assert job["status"] == "failed"
+    assert "Adicione os gastos manualmente" in job["errors"][0]
