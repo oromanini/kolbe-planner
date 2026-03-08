@@ -1,4 +1,15 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Response, Header, Query, UploadFile, File, Form
+from fastapi import (
+    FastAPI,
+    APIRouter,
+    HTTPException,
+    Cookie,
+    Response,
+    Header,
+    Query,
+    UploadFile,
+    File,
+    Form,
+)
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -15,6 +26,7 @@ import hashlib
 import json
 import re
 import asyncio
+import base64
 import smtplib
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
@@ -23,12 +35,12 @@ import importlib
 
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ["DB_NAME"]]
 
 # Create the main app without a prefix
 app = FastAPI()
@@ -38,6 +50,7 @@ api_router = APIRouter(prefix="/api")
 
 
 # ============ MODELS ============
+
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -61,12 +74,14 @@ class Quote(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 class UserSession(BaseModel):
     model_config = ConfigDict(extra="ignore")
     session_token: str
     user_id: str
     expires_at: datetime
     created_at: datetime
+
 
 class Habit(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -82,6 +97,7 @@ class Habit(BaseModel):
     order: int
     created_at: datetime
 
+
 class HabitCompletion(BaseModel):
     model_config = ConfigDict(extra="ignore")
     completion_id: str
@@ -91,16 +107,20 @@ class HabitCompletion(BaseModel):
     completed: bool
     completed_at: Optional[datetime] = None
 
+
 # ============ INPUT MODELS ============
+
 
 class LoginRequest(BaseModel):
     email: str
     password: str
 
+
 class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
+
 
 class HabitCreate(BaseModel):
     name: str
@@ -111,6 +131,7 @@ class HabitCreate(BaseModel):
     frequency: Literal["daily", "weekdays", "custom"] = "daily"
     selected_weekdays: List[int] = Field(default_factory=list)
 
+
 class HabitUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
@@ -120,6 +141,7 @@ class HabitUpdate(BaseModel):
     frequency: Optional[Literal["daily", "weekdays", "custom"]] = None
     selected_weekdays: Optional[List[int]] = None
     order: Optional[int] = None
+
 
 class CompletionToggle(BaseModel):
     habit_id: str
@@ -159,71 +181,67 @@ class NotificationItem(BaseModel):
 
 # ============ AUTH HELPER ============
 
+
 async def get_current_user(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ) -> User:
     """Get current user from session token (cookie or header)"""
     token = session_token
-    
+
     # Fallback to Authorization header
     if not token and authorization:
-        if authorization.startswith('Bearer '):
+        if authorization.startswith("Bearer "):
             token = authorization[7:]
         else:
             token = authorization
-    
+
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     # Find session
-    session_doc = await db.user_sessions.find_one(
-        {"session_token": token},
-        {"_id": 0}
-    )
-    
+    session_doc = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+
     if not session_doc:
         raise HTTPException(status_code=401, detail="Invalid session")
-    
+
     # Check expiry
     expires_at = session_doc["expires_at"]
     if isinstance(expires_at, str):
         expires_at = datetime.fromisoformat(expires_at)
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
-    
+
     if expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Session expired")
-    
+
     # Get user
-    user_doc = await db.users.find_one(
-        {"user_id": session_doc["user_id"]},
-        {"_id": 0}
-    )
-    
+    user_doc = await db.users.find_one({"user_id": session_doc["user_id"]}, {"_id": 0})
+
     if not user_doc:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     # Parse datetime
-    if isinstance(user_doc.get('created_at'), str):
-        user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+    if isinstance(user_doc.get("created_at"), str):
+        user_doc["created_at"] = datetime.fromisoformat(user_doc["created_at"])
+    user_doc["settings"] = normalize_user_settings(user_doc.get("settings"))
 
     return User(**user_doc)
-
-
 
 
 def normalize_user_settings(settings: Optional[dict]) -> dict:
     normalized = {"kolbe_mode_enabled": False}
     if isinstance(settings, dict):
-        normalized["kolbe_mode_enabled"] = bool(settings.get("kolbe_mode_enabled", False))
+        normalized["kolbe_mode_enabled"] = bool(
+            settings.get("kolbe_mode_enabled", False)
+        )
     return normalized
 
 
 def normalize_quote_key(mode: str, text: str, author: str) -> str:
     def clean(value: str) -> str:
         return re.sub(r"\s+", " ", (value or "").strip().lower())
+
     return f"{clean(mode)}::{clean(text)}::{clean(author)}"
 
 
@@ -250,18 +268,27 @@ def parse_day_key(value: str) -> datetime:
     try:
         return datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid date format. Use YYYY-MM-DD"
+        ) from exc
 
 
-def ensure_period_is_valid(start_date: str, end_date: str, min_date: Optional[str] = None):
+def ensure_period_is_valid(
+    start_date: str, end_date: str, min_date: Optional[str] = None
+):
     start = parse_day_key(start_date)
     end = parse_day_key(end_date)
     if end < start:
-        raise HTTPException(status_code=400, detail="End date must be greater than or equal to start date")
+        raise HTTPException(
+            status_code=400,
+            detail="End date must be greater than or equal to start date",
+        )
     if min_date:
         minimum = parse_day_key(min_date)
         if start < minimum:
-            raise HTTPException(status_code=400, detail="Start date cannot be in the past")
+            raise HTTPException(
+                status_code=400, detail="Start date cannot be in the past"
+            )
 
 
 def is_habit_scheduled_for_date(habit: dict, selected_date: datetime) -> bool:
@@ -280,15 +307,23 @@ def sanitize_selected_weekdays(selected_weekdays: Optional[List[int]]) -> List[i
 
     normalized_days = sorted(set(selected_weekdays))
     if any(day < 0 or day > 4 for day in normalized_days):
-        raise HTTPException(status_code=400, detail="selected_weekdays must contain values between 0 (Seg) and 4 (Sex)")
+        raise HTTPException(
+            status_code=400,
+            detail="selected_weekdays must contain values between 0 (Seg) and 4 (Sex)",
+        )
     return normalized_days
 
 
 def validate_frequency_selection(frequency: str, selected_weekdays: List[int]):
     if frequency == "custom" and not selected_weekdays:
-        raise HTTPException(status_code=400, detail="Select at least one weekday for custom frequency")
+        raise HTTPException(
+            status_code=400, detail="Select at least one weekday for custom frequency"
+        )
 
-def compose_goal_notifications(habits: List[dict], completions: List[dict], now_local: datetime) -> List[dict]:
+
+def compose_goal_notifications(
+    habits: List[dict], completions: List[dict], now_local: datetime
+) -> List[dict]:
     notifications: List[dict] = []
     today_key = now_local.strftime("%Y-%m-%d")
     today = datetime.strptime(today_key, "%Y-%m-%d")
@@ -311,49 +346,72 @@ def compose_goal_notifications(habits: List[dict], completions: List[dict], now_
         days_remaining = (end_date - today).days
         if 1 <= days_remaining <= 3 and today >= start_date:
             message = f"Faltam {days_remaining} dias para concluir o objetivo {name}."
-            notifications.append({
-                "id": f"goal-deadline-{habit_id}-{today_key}",
-                "dedupe_key": f"goal_deadline:{habit_id}:{days_remaining}:{today_key}",
-                "type": "deadline",
-                "source": "goals",
-                "tone": "warning",
-                "message": message,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
-
-        if now_local.hour >= 23 and today_key >= start_key and today_key <= end_key and is_habit_scheduled_for_date(habit, today):
-            completion_for_today = next((comp for comp in completions if comp.get("habit_id") == habit_id and comp.get("date") == today_key), None)
-            if not (completion_for_today and completion_for_today.get("completed")):
-                message = f"Já são 23h e você ainda não concluiu o objetivo {name} hoje."
-                notifications.append({
-                    "id": f"goal-late-{habit_id}-{today_key}",
-                    "dedupe_key": f"goal_late:{habit_id}:{today_key}",
-                    "type": "late",
+            notifications.append(
+                {
+                    "id": f"goal-deadline-{habit_id}-{today_key}",
+                    "dedupe_key": f"goal_deadline:{habit_id}:{days_remaining}:{today_key}",
+                    "type": "deadline",
                     "source": "goals",
-                    "tone": "danger",
+                    "tone": "warning",
                     "message": message,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                })
+                }
+            )
+
+        if (
+            now_local.hour >= 23
+            and today_key >= start_key
+            and today_key <= end_key
+            and is_habit_scheduled_for_date(habit, today)
+        ):
+            completion_for_today = next(
+                (
+                    comp
+                    for comp in completions
+                    if comp.get("habit_id") == habit_id
+                    and comp.get("date") == today_key
+                ),
+                None,
+            )
+            if not (completion_for_today and completion_for_today.get("completed")):
+                message = (
+                    f"Já são 23h e você ainda não concluiu o objetivo {name} hoje."
+                )
+                notifications.append(
+                    {
+                        "id": f"goal-late-{habit_id}-{today_key}",
+                        "dedupe_key": f"goal_late:{habit_id}:{today_key}",
+                        "type": "late",
+                        "source": "goals",
+                        "tone": "danger",
+                        "message": message,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
 
     if now_local.day == 1:
-        notifications.append({
-            "id": f"month-review-goals-{today_key}",
-            "dedupe_key": f"month_review:goals:{today_key}",
-            "type": "month_review",
-            "source": "goals",
-            "tone": "info",
-            "message": "Hoje é dia 1: revise e ajuste suas metas do mês para manter o foco.",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        notifications.append({
-            "id": f"month-review-finance-{today_key}",
-            "dedupe_key": f"month_review:finance:{today_key}",
-            "type": "month_review",
-            "source": "finance",
-            "tone": "info",
-            "message": "Começo do mês: revise seu planejamento financeiro e atualize orçamento e categorias.",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        notifications.append(
+            {
+                "id": f"month-review-goals-{today_key}",
+                "dedupe_key": f"month_review:goals:{today_key}",
+                "type": "month_review",
+                "source": "goals",
+                "tone": "info",
+                "message": "Hoje é dia 1: revise e ajuste suas metas do mês para manter o foco.",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        notifications.append(
+            {
+                "id": f"month-review-finance-{today_key}",
+                "dedupe_key": f"month_review:finance:{today_key}",
+                "type": "month_review",
+                "source": "finance",
+                "tone": "info",
+                "message": "Começo do mês: revise seu planejamento financeiro e atualize orçamento e categorias.",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     return notifications
 
@@ -368,7 +426,9 @@ async def persist_notifications(user_id: str, items: List[dict]) -> List[dict]:
             **item,
             "user_id": user_id,
         }
-        existing = await db.notifications.find_one({"user_id": user_id, "dedupe_key": item["dedupe_key"]}, {"_id": 0, "id": 1})
+        existing = await db.notifications.find_one(
+            {"user_id": user_id, "dedupe_key": item["dedupe_key"]}, {"_id": 0, "id": 1}
+        )
         if existing:
             continue
 
@@ -400,7 +460,10 @@ async def dispatch_email_notifications(user: User, items: List[dict]) -> bool:
     password = os.environ.get("SMTP_PASSWORD")
 
     if not host or not sender or not username or not password:
-        logger.info("SMTP not configured; skipping email notifications for user %s", user.user_id)
+        logger.info(
+            "SMTP not configured; skipping email notifications for user %s",
+            user.user_id,
+        )
         return False
 
     message = EmailMessage()
@@ -408,8 +471,12 @@ async def dispatch_email_notifications(user: User, items: List[dict]) -> bool:
     message["From"] = sender
     message["To"] = user.email
     plain_text = "\n".join([f"- {item['message']}" for item in items])
-    message.set_content(f"Olá, {user.name}!\n\nVocê recebeu novos alertas:\n{plain_text}")
-    message.add_alternative(_build_notification_email_html(user.name, items), subtype="html")
+    message.set_content(
+        f"Olá, {user.name}!\n\nVocê recebeu novos alertas:\n{plain_text}"
+    )
+    message.add_alternative(
+        _build_notification_email_html(user.name, items), subtype="html"
+    )
 
     try:
         with smtplib.SMTP(host=host, port=port, timeout=20) as smtp:
@@ -417,19 +484,26 @@ async def dispatch_email_notifications(user: User, items: List[dict]) -> bool:
             smtp.login(username, password)
             smtp.send_message(message)
     except Exception as exc:
-        logger.exception("Failed to send notification email for user %s: %s", user.user_id, exc)
+        logger.exception(
+            "Failed to send notification email for user %s: %s", user.user_id, exc
+        )
         return False
 
     return True
 
 
-
 async def require_admin_user(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ) -> User:
     user = await get_current_user(session_token, authorization)
-    admin_emails = [email.strip().lower() for email in os.environ.get("ADMIN_EMAILS", "oscar.romanini.jr@gmail.com").split(",") if email.strip()]
+    admin_emails = [
+        email.strip().lower()
+        for email in os.environ.get(
+            "ADMIN_EMAILS", "oscar.romanini.jr@gmail.com"
+        ).split(",")
+        if email.strip()
+    ]
     is_admin = user.email.lower() in admin_emails
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -438,42 +512,47 @@ async def require_admin_user(
 
 # ============ AUTH ENDPOINTS ============
 
+
 @api_router.post("/auth/register")
 async def register(request: RegisterRequest, response: Response):
     """Register new user with email/password"""
-    
+
     # Check if user exists
     existing = await db.users.find_one({"email": request.email}, {"_id": 0})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     # Hash password
     password_hash = hashlib.sha256(request.password.encode()).hexdigest()
-    
+
     # Create user
     user_id = f"user_{uuid.uuid4().hex[:12]}"
-    await db.users.insert_one({
-        "user_id": user_id,
-        "email": request.email,
-        "name": request.name,
-        "password_hash": password_hash,
-        "picture": None,
-        "onboarding_completed": False,
-        "settings": {"kolbe_mode_enabled": False},
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    
+    await db.users.insert_one(
+        {
+            "user_id": user_id,
+            "email": request.email,
+            "name": request.name,
+            "password_hash": password_hash,
+            "picture": None,
+            "onboarding_completed": False,
+            "settings": {"kolbe_mode_enabled": False},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
     # Create session
     session_token = f"jwt_{uuid.uuid4().hex}"
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
-    await db.user_sessions.insert_one({
-        "session_token": session_token,
-        "user_id": user_id,
-        "expires_at": expires_at.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    
+
+    await db.user_sessions.insert_one(
+        {
+            "session_token": session_token,
+            "user_id": user_id,
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
     # Set cookie
     response.set_cookie(
         key="session_token",
@@ -482,13 +561,13 @@ async def register(request: RegisterRequest, response: Response):
         secure=True,
         samesite="none",
         path="/",
-        max_age=7*24*60*60
+        max_age=7 * 24 * 60 * 60,
     )
-    
+
     user_doc = await db.users.find_one({"user_id": user_id}, {"_id": 0})
-    if isinstance(user_doc.get('created_at'), str):
-        user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+    if isinstance(user_doc.get("created_at"), str):
+        user_doc["created_at"] = datetime.fromisoformat(user_doc["created_at"])
+    user_doc["settings"] = normalize_user_settings(user_doc.get("settings"))
 
     return {**User(**user_doc).model_dump(), "session_token": session_token}
 
@@ -496,28 +575,30 @@ async def register(request: RegisterRequest, response: Response):
 @api_router.post("/auth/login")
 async def login(request: LoginRequest, response: Response):
     """Login with email/password"""
-    
+
     # Find user
     user_doc = await db.users.find_one({"email": request.email}, {"_id": 0})
     if not user_doc:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     # Verify password
     password_hash = hashlib.sha256(request.password.encode()).hexdigest()
     if user_doc.get("password_hash") != password_hash:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
+
     # Create session
     session_token = f"jwt_{uuid.uuid4().hex}"
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    
-    await db.user_sessions.insert_one({
-        "session_token": session_token,
-        "user_id": user_doc["user_id"],
-        "expires_at": expires_at.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-    
+
+    await db.user_sessions.insert_one(
+        {
+            "session_token": session_token,
+            "user_id": user_doc["user_id"],
+            "expires_at": expires_at.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
     # Set cookie
     response.set_cookie(
         key="session_token",
@@ -526,12 +607,12 @@ async def login(request: LoginRequest, response: Response):
         secure=True,
         samesite="none",
         path="/",
-        max_age=7*24*60*60
+        max_age=7 * 24 * 60 * 60,
     )
-    
-    if isinstance(user_doc.get('created_at'), str):
-        user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
-    user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
+
+    if isinstance(user_doc.get("created_at"), str):
+        user_doc["created_at"] = datetime.fromisoformat(user_doc["created_at"])
+    user_doc["settings"] = normalize_user_settings(user_doc.get("settings"))
 
     return {**User(**user_doc).model_dump(), "session_token": session_token}
 
@@ -539,7 +620,7 @@ async def login(request: LoginRequest, response: Response):
 @api_router.get("/auth/me")
 async def get_me(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Get current user info"""
     user = await get_current_user(session_token, authorization)
@@ -555,7 +636,7 @@ async def logout(response: Response, user: User = None):
         await db.user_sessions.delete_many({"user_id": user.user_id})
     except:
         pass
-    
+
     # Clear cookie
     response.delete_cookie(key="session_token", path="/")
     return {"message": "Logged out"}
@@ -564,14 +645,13 @@ async def logout(response: Response, user: User = None):
 @api_router.post("/auth/complete-onboarding")
 async def complete_onboarding(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Mark onboarding as completed"""
     user = await get_current_user(session_token, authorization)
 
     await db.users.update_one(
-        {"user_id": user.user_id},
-        {"$set": {"onboarding_completed": True}}
+        {"user_id": user.user_id}, {"$set": {"onboarding_completed": True}}
     )
 
     return {"message": "Onboarding completed"}
@@ -581,19 +661,18 @@ async def complete_onboarding(
 async def update_user_settings(
     payload: UserSettingsUpdate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
 
     current_settings = normalize_user_settings(user.settings)
     new_settings = {
         **current_settings,
-        "kolbe_mode_enabled": payload.kolbe_mode_enabled
+        "kolbe_mode_enabled": payload.kolbe_mode_enabled,
     }
 
     await db.users.update_one(
-        {"user_id": user.user_id},
-        {"$set": {"settings": new_settings}}
+        {"user_id": user.user_id}, {"$set": {"settings": new_settings}}
     )
 
     return {"settings": new_settings}
@@ -602,27 +681,35 @@ async def update_user_settings(
 @api_router.get("/quotes/daily")
 async def get_daily_quote(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     mode = "kolbe" if user.settings.get("kolbe_mode_enabled") else "neutral"
-    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1}) or {}
+    user_doc = (
+        await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+        or {}
+    )
     timezone_name = get_user_timezone(user_doc)
     local_day = get_local_day_key(timezone_name)
 
     stored = await db.user_daily_quotes.find_one(
-        {"user_id": user.user_id, "local_day": local_day, "mode": mode},
-        {"_id": 0}
+        {"user_id": user.user_id, "local_day": local_day, "mode": mode}, {"_id": 0}
     )
     if stored:
-        quote = await db.quotes.find_one({"id": stored["quote_id"], "active": True}, {"_id": 0})
+        quote = await db.quotes.find_one(
+            {"id": stored["quote_id"], "active": True}, {"_id": 0}
+        )
         if quote:
             return {"quote": quote, "mode": mode, "local_day": local_day}
 
-    quotes = await db.quotes.find({"mode": mode, "active": True}, {"_id": 0}).to_list(2000)
+    quotes = await db.quotes.find({"mode": mode, "active": True}, {"_id": 0}).to_list(
+        2000
+    )
     selected_mode = mode
     if not quotes and mode == "kolbe":
-        quotes = await db.quotes.find({"mode": "neutral", "active": True}, {"_id": 0}).to_list(2000)
+        quotes = await db.quotes.find(
+            {"mode": "neutral", "active": True}, {"_id": 0}
+        ).to_list(2000)
         selected_mode = "neutral"
 
     if not quotes:
@@ -634,9 +721,14 @@ async def get_daily_quote(
 
     await db.user_daily_quotes.update_one(
         {"user_id": user.user_id, "local_day": local_day, "mode": selected_mode},
-        {"$set": {"quote_id": quote["id"], "updated_at": datetime.now(timezone.utc).isoformat()},
-         "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True
+        {
+            "$set": {
+                "quote_id": quote["id"],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "$setOnInsert": {"created_at": datetime.now(timezone.utc).isoformat()},
+        },
+        upsert=True,
     )
 
     return {"quote": quote, "mode": selected_mode, "local_day": local_day}
@@ -644,33 +736,37 @@ async def get_daily_quote(
 
 # ============ HABITS ENDPOINTS ============
 
+
 @api_router.get("/habits", response_model=List[Habit])
 async def get_habits(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Get user's habits"""
     user = await get_current_user(session_token, authorization)
-    
-    habits = await db.habits.find(
-        {"user_id": user.user_id},
-        {"_id": 0}
-    ).sort("order", 1).to_list(100)
-    
+
+    habits = (
+        await db.habits.find({"user_id": user.user_id}, {"_id": 0})
+        .sort("order", 1)
+        .to_list(100)
+    )
+
     # Parse datetimes
     for habit in habits:
-        if isinstance(habit.get('created_at'), str):
-            habit['created_at'] = datetime.fromisoformat(habit['created_at'])
-        start_date = habit.get('start_date')
+        if isinstance(habit.get("created_at"), str):
+            habit["created_at"] = datetime.fromisoformat(habit["created_at"])
+        start_date = habit.get("start_date")
         if not start_date:
             start_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            habit['start_date'] = start_date
-        if not habit.get('end_date'):
-            habit['end_date'] = start_date
-        if not habit.get('frequency'):
-            habit['frequency'] = 'daily'
-        habit['selected_weekdays'] = sanitize_selected_weekdays(habit.get('selected_weekdays'))
-    
+            habit["start_date"] = start_date
+        if not habit.get("end_date"):
+            habit["end_date"] = start_date
+        if not habit.get("frequency"):
+            habit["frequency"] = "daily"
+        habit["selected_weekdays"] = sanitize_selected_weekdays(
+            habit.get("selected_weekdays")
+        )
+
     return habits
 
 
@@ -678,25 +774,25 @@ async def get_habits(
 async def create_habit(
     habit_data: HabitCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Create a new habit (max 10)"""
     user = await get_current_user(session_token, authorization)
-    
+
     # Check limit
     count = await db.habits.count_documents({"user_id": user.user_id})
     if count >= 10:
         raise HTTPException(status_code=400, detail="Maximum 10 habits allowed")
-    
+
     # Get next order
     last_habit = await db.habits.find_one(
-        {"user_id": user.user_id},
-        {"_id": 0, "order": 1},
-        sort=[("order", -1)]
+        {"user_id": user.user_id}, {"_id": 0, "order": 1}, sort=[("order", -1)]
     )
     next_order = (last_habit["order"] + 1) if last_habit else 0
-    
-    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+
+    user_doc = await db.users.find_one(
+        {"user_id": user.user_id}, {"_id": 0, "settings": 1}
+    )
     today_key = get_local_day_key(get_user_timezone(user_doc or {}))
     ensure_period_is_valid(habit_data.start_date, habit_data.end_date, today_key)
     selected_weekdays = sanitize_selected_weekdays(habit_data.selected_weekdays)
@@ -713,13 +809,13 @@ async def create_habit(
         frequency=habit_data.frequency,
         selected_weekdays=selected_weekdays,
         order=next_order,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc),
     )
-    
+
     doc = habit.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
+    doc["created_at"] = doc["created_at"].isoformat()
     await db.habits.insert_one(doc)
-    
+
     return habit
 
 
@@ -728,49 +824,57 @@ async def update_habit(
     habit_id: str,
     habit_data: HabitUpdate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Update a habit"""
     user = await get_current_user(session_token, authorization)
-    
+
     # Check ownership
     habit = await db.habits.find_one(
-        {"habit_id": habit_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"habit_id": habit_id, "user_id": user.user_id}, {"_id": 0}
     )
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
-    
+
     # Update
     update_data = {k: v for k, v in habit_data.model_dump().items() if v is not None}
     if update_data:
-        user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+        user_doc = await db.users.find_one(
+            {"user_id": user.user_id}, {"_id": 0, "settings": 1}
+        )
         today_key = get_local_day_key(get_user_timezone(user_doc or {}))
-        next_start_date = update_data.get("start_date", habit.get("start_date", today_key))
-        next_end_date = update_data.get("end_date", habit.get("end_date", next_start_date))
+        next_start_date = update_data.get(
+            "start_date", habit.get("start_date", today_key)
+        )
+        next_end_date = update_data.get(
+            "end_date", habit.get("end_date", next_start_date)
+        )
         ensure_period_is_valid(next_start_date, next_end_date, today_key)
 
         next_frequency = update_data.get("frequency", habit.get("frequency", "daily"))
-        next_selected_weekdays = sanitize_selected_weekdays(update_data.get("selected_weekdays", habit.get("selected_weekdays")))
+        next_selected_weekdays = sanitize_selected_weekdays(
+            update_data.get("selected_weekdays", habit.get("selected_weekdays"))
+        )
         validate_frequency_selection(next_frequency, next_selected_weekdays)
         update_data["selected_weekdays"] = next_selected_weekdays
 
-        await db.habits.update_one(
-            {"habit_id": habit_id},
-            {"$set": update_data}
-        )
-    
+        await db.habits.update_one({"habit_id": habit_id}, {"$set": update_data})
+
     # Return updated
     updated_habit = await db.habits.find_one({"habit_id": habit_id}, {"_id": 0})
-    if isinstance(updated_habit.get('created_at'), str):
-        updated_habit['created_at'] = datetime.fromisoformat(updated_habit['created_at'])
-    if not updated_habit.get('start_date'):
-        updated_habit['start_date'] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if not updated_habit.get('end_date'):
-        updated_habit['end_date'] = updated_habit['start_date']
-    if not updated_habit.get('frequency'):
-        updated_habit['frequency'] = 'daily'
-    updated_habit['selected_weekdays'] = sanitize_selected_weekdays(updated_habit.get('selected_weekdays'))
+    if isinstance(updated_habit.get("created_at"), str):
+        updated_habit["created_at"] = datetime.fromisoformat(
+            updated_habit["created_at"]
+        )
+    if not updated_habit.get("start_date"):
+        updated_habit["start_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if not updated_habit.get("end_date"):
+        updated_habit["end_date"] = updated_habit["start_date"]
+    if not updated_habit.get("frequency"):
+        updated_habit["frequency"] = "daily"
+    updated_habit["selected_weekdays"] = sanitize_selected_weekdays(
+        updated_habit.get("selected_weekdays")
+    )
 
     return Habit(**updated_habit)
 
@@ -779,37 +883,35 @@ async def update_habit(
 async def delete_habit(
     habit_id: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Delete a habit and its completions"""
     user = await get_current_user(session_token, authorization)
-    
-    result = await db.habits.delete_one(
-        {"habit_id": habit_id, "user_id": user.user_id}
-    )
-    
+
+    result = await db.habits.delete_one({"habit_id": habit_id, "user_id": user.user_id})
+
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Habit not found")
-    
+
     # Delete completions
     await db.habit_completions.delete_many({"habit_id": habit_id})
-    
+
     return {"message": "Habit deleted"}
 
 
 @api_router.post("/habits/initialize-defaults")
 async def initialize_default_habits(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Create default example habits"""
     user = await get_current_user(session_token, authorization)
-    
+
     # Check if user already has habits
     count = await db.habits.count_documents({"user_id": user.user_id})
     if count > 0:
         raise HTTPException(status_code=400, detail="User already has habits")
-    
+
     default_habits = [
         {"name": "Exercício", "color": "#CD1C33", "icon": "activity"},
         {"name": "Leitura", "color": "#0F1B2D", "icon": "book-open"},
@@ -821,12 +923,14 @@ async def initialize_default_habits(
 
 # ============ FINANCIAL MODELS ============
 
+
 class FinancialMethod(BaseModel):
     model_config = ConfigDict(extra="ignore")
     method_id: str
     user_id: str
     name: str
     created_at: datetime
+
 
 class FinancialCategory(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -835,6 +939,7 @@ class FinancialCategory(BaseModel):
     name: str
     type: Literal["expense", "income"] = "expense"
     created_at: datetime
+
 
 class Expense(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -848,6 +953,7 @@ class Expense(BaseModel):
     month: str  # YYYY-MM
     created_at: datetime
 
+
 class Income(BaseModel):
     model_config = ConfigDict(extra="ignore")
     income_id: str
@@ -857,6 +963,7 @@ class Income(BaseModel):
     category: Optional[str] = None
     month: str  # YYYY-MM
     created_at: datetime
+
 
 class Savings(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -890,6 +997,7 @@ class InvoiceReaderJob(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 # Input models
 class ExpenseCreate(BaseModel):
     name: str
@@ -899,6 +1007,7 @@ class ExpenseCreate(BaseModel):
     subcategory: Optional[str] = None
     month: str
 
+
 class ExpenseUpdate(BaseModel):
     name: str
     amount: float
@@ -907,16 +1016,19 @@ class ExpenseUpdate(BaseModel):
     subcategory: Optional[str] = None
     month: str
 
+
 class IncomeCreate(BaseModel):
     name: str
     amount: float
     category: str
     month: str
 
+
 class SavingsCreate(BaseModel):
     name: str
     type: str
     amount: float
+
 
 class MethodCreate(BaseModel):
     name: str
@@ -949,8 +1061,12 @@ def normalize_category_key(name: str) -> str:
 
 
 async def ensure_default_financial_methods(user_id: str):
-    existing_methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0, "name": 1}).to_list(200)
-    existing_names = {normalize_method_name(method.get("name", "")) for method in existing_methods}
+    existing_methods = await db.financial_methods.find(
+        {"user_id": user_id}, {"_id": 0, "name": 1}
+    ).to_list(200)
+    existing_names = {
+        normalize_method_name(method.get("name", "")) for method in existing_methods
+    }
 
     for name in DEFAULT_FINANCIAL_METHODS:
         if normalize_method_name(name) in existing_names:
@@ -974,12 +1090,14 @@ async def ensure_financial_category_indexes() -> None:
             continue
 
         keys = [tuple(entry) for entry in index_meta.get("key", [])]
-        if index_meta.get("unique") and keys in ([("user_id", 1)], [("user_id", 1), ("name_key", 1)]):
+        if index_meta.get("unique") and keys in (
+            [("user_id", 1)],
+            [("user_id", 1), ("name_key", 1)],
+        ):
             await db.financial_categories.drop_index(index_name)
 
     await db.financial_categories.update_many(
-        {"type": {"$exists": False}},
-        {"$set": {"type": "expense"}}
+        {"type": {"$exists": False}}, {"$set": {"type": "expense"}}
     )
 
 
@@ -987,12 +1105,15 @@ class CategoryCreate(BaseModel):
     name: str
     type: Literal["expense", "income"] = "expense"
 
+
 class CategoryUpdate(BaseModel):
     name: str
     type: Literal["expense", "income"] = "expense"
 
 
-async def resolve_user_category_name(user_id: str, raw_category: str, expected_type: Optional[str] = None) -> Optional[str]:
+async def resolve_user_category_name(
+    user_id: str, raw_category: str, expected_type: Optional[str] = None
+) -> Optional[str]:
     """Resolve category payload to the canonical category name stored for the user."""
     category_value = (raw_category or "").strip()
     if not category_value:
@@ -1027,9 +1148,41 @@ async def resolve_user_category_name(user_id: str, raw_category: str, expected_t
     return None
 
 
-
 class InvoiceImportRequest(BaseModel):
     requested_month: str
+
+
+INVOICE_JOB_RETENTION_MINUTES = 5
+
+
+def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+async def cleanup_expired_invoice_jobs(user_id: str):
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=INVOICE_JOB_RETENTION_MINUTES
+    )
+    jobs = await db.invoice_reader_jobs.find(
+        {"user_id": user_id}, {"_id": 0, "job_id": 1, "status": 1, "finished_at": 1}
+    ).to_list(500)
+    for job in jobs:
+        if job.get("status") not in {"completed", "failed"}:
+            continue
+        finished_at = parse_iso_datetime(job.get("finished_at"))
+        if not finished_at:
+            continue
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=timezone.utc)
+        if finished_at <= cutoff:
+            await db.invoice_reader_jobs.delete_one(
+                {"job_id": job.get("job_id"), "user_id": user_id}
+            )
 
 
 def detect_bank_name(raw_text: str) -> str:
@@ -1072,7 +1225,9 @@ def parse_brl_number(raw_value: str) -> Optional[float]:
         return None
 
 
-def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float] = None) -> List[dict]:
+def extract_invoice_items_with_ai(
+    raw_text: str, expected_total: Optional[float] = None
+) -> List[dict]:
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return []
@@ -1090,7 +1245,7 @@ def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float]
         "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
         "Considere layouts de bancos brasileiros variados (Itau, Nubank, Bradesco, Santander e outros). "
         "Responda somente JSON válido no formato: "
-        "{\"items\":[{\"name\":\"texto\",\"amount\":123.45}]}. "
+        '{"items":[{"name":"texto","amount":123.45}]}. '
         "Use amount com ponto decimal e valor positivo.\n"
         f"{expected_hint}\n"
         f"Texto bruto:\n{snippet}"
@@ -1145,6 +1300,92 @@ def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float]
         },
     }
 
+    return run_invoice_ai_payload(payload, api_key)
+
+
+def extract_invoice_items_from_pdf_with_ai(
+    pdf_bytes: bytes, filename: str, expected_total: Optional[float] = None
+) -> List[dict]:
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key or not pdf_bytes:
+        return []
+
+    encoded_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+    expected_hint = ""
+    if expected_total is not None:
+        expected_hint = (
+            f"Total esperado da fatura: {expected_total:.2f}. "
+            "Priorize linhas de compra cuja soma bata com esse total.\n"
+        )
+
+    prompt = (
+        "Extraia apenas lançamentos de compra da fatura anexada. "
+        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
+        "Responda somente JSON válido no formato: "
+        '{"items":[{"name":"texto","amount":123.45}]}. '
+        "Use amount com ponto decimal e valor positivo.\n"
+        f"{expected_hint}"
+    )
+
+    payload = {
+        "model": os.getenv("OPENAI_INVOICE_MODEL", "gpt-4.1-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Você é um extrator de lançamentos de fatura. Retorne apenas JSON.",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_file",
+                        "filename": filename or "fatura.pdf",
+                        "file_data": f"data:application/pdf;base64,{encoded_pdf}",
+                    },
+                    {
+                        "type": "input_text",
+                        "text": prompt,
+                    },
+                ],
+            },
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "invoice_items",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "amount": {"type": "number"},
+                                },
+                                "required": ["name", "amount"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+    }
+
+    return run_invoice_ai_payload(payload, api_key)
+
+
+def run_invoice_ai_payload(payload: dict, api_key: str) -> List[dict]:
+
     try:
         import requests
 
@@ -1185,7 +1426,11 @@ def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float]
     for entry in parsed.get("items", []):
         name = str(entry.get("name", "")).strip()
         amount_raw = entry.get("amount")
-        amount = float(amount_raw) if isinstance(amount_raw, (int, float)) else parse_brl_number(str(amount_raw))
+        amount = (
+            float(amount_raw)
+            if isinstance(amount_raw, (int, float))
+            else parse_brl_number(str(amount_raw))
+        )
         if not name or amount is None or amount <= 0:
             continue
         key = (name.casefold(), round(amount, 2))
@@ -1215,25 +1460,32 @@ def extract_expected_total(raw_text: str) -> Optional[float]:
 def extract_invoice_items(raw_text: str) -> List[dict]:
     items = []
     seen = set()
-    lines = [line.strip() for line in (raw_text or "").splitlines() if line and line.strip()]
+    lines = [
+        line.strip() for line in (raw_text or "").splitlines() if line and line.strip()
+    ]
     patterns = [
-        re.compile(r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+R\$\s*([0-9\.,]+)$", re.IGNORECASE),
+        re.compile(
+            r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+R\$\s*([0-9\.,]+)$", re.IGNORECASE
+        ),
         re.compile(r"^\d{2}/\d{2}\s+(.+?)\s+([0-9\.,]+)$", re.IGNORECASE),
         re.compile(r"^(.+?)\s+-\s+([0-9]+/[0-9]+)\s*-\s+([0-9\.,]+)$", re.IGNORECASE),
     ]
 
     for line in lines:
         lowered = line.lower()
-        if any(flag in lowered for flag in ["pagamento", "estorno", "anuidade", "juros", "iof", "encargos"]):
+        if any(
+            flag in lowered
+            for flag in ["pagamento", "estorno", "anuidade", "juros", "iof", "encargos"]
+        ):
             continue
         for pattern in patterns:
             match = pattern.match(line)
             if not match:
                 continue
-            if pattern.pattern.startswith('^\d{2}\s+'):
+            if pattern.pattern.startswith("^\d{2}\s+"):
                 description = match.group(1).strip()
                 amount_raw = match.group(2)
-            elif pattern.pattern.startswith('^\d{2}/'):
+            elif pattern.pattern.startswith("^\d{2}/"):
                 description = match.group(1).strip()
                 amount_raw = match.group(2)
             else:
@@ -1300,8 +1552,13 @@ async def _set_invoice_job(job_id: str, patch: dict):
     await db.invoice_reader_jobs.update_one({"job_id": job_id}, {"$set": patch})
 
 
-async def process_invoice_reader_job(job_id: str, user_id: str, requested_month: str, filename: str, pdf_bytes: bytes):
-    await _set_invoice_job(job_id, {"status": "processing", "started_at": datetime.now(timezone.utc).isoformat()})
+async def process_invoice_reader_job(
+    job_id: str, user_id: str, requested_month: str, filename: str, pdf_bytes: bytes
+):
+    await _set_invoice_job(
+        job_id,
+        {"status": "processing", "started_at": datetime.now(timezone.utc).isoformat()},
+    )
     errors = []
     created_ids = []
     try:
@@ -1310,29 +1567,63 @@ async def process_invoice_reader_job(job_id: str, user_id: str, requested_month:
         suffix = detect_card_suffix(raw_text)
         category_name = await ensure_expense_category(user_id, f"{bank} final {suffix}")
 
-        await _set_invoice_job(job_id, {"bank_name": bank, "card_suffix": suffix, "category_name": category_name})
+        await _set_invoice_job(
+            job_id,
+            {"bank_name": bank, "card_suffix": suffix, "category_name": category_name},
+        )
 
-        methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0}).to_list(100)
-        method = next((m for m in methods if normalize_method_name(m.get("name", "")) == "crédito a vista"), None)
+        methods = await db.financial_methods.find(
+            {"user_id": user_id}, {"_id": 0}
+        ).to_list(100)
+        method = next(
+            (
+                m
+                for m in methods
+                if normalize_method_name(m.get("name", "")) == "crédito a vista"
+            ),
+            None,
+        )
         if not method:
             await ensure_default_financial_methods(user_id)
-            methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0}).to_list(100)
-            method = next((m for m in methods if normalize_method_name(m.get("name", "")) == "crédito a vista"), None)
+            methods = await db.financial_methods.find(
+                {"user_id": user_id}, {"_id": 0}
+            ).to_list(100)
+            method = next(
+                (
+                    m
+                    for m in methods
+                    if normalize_method_name(m.get("name", "")) == "crédito a vista"
+                ),
+                None,
+            )
         if not method:
             raise ValueError("Método padrão de cartão não encontrado")
 
         expected_total = extract_expected_total(raw_text)
-        items = await asyncio.to_thread(extract_invoice_items_with_ai, raw_text, expected_total)
+        items = await asyncio.to_thread(
+            extract_invoice_items_from_pdf_with_ai, pdf_bytes, filename, expected_total
+        )
+        if not items:
+            items = await asyncio.to_thread(
+                extract_invoice_items_with_ai, raw_text, expected_total
+            )
+        if not items:
+            items = await asyncio.to_thread(extract_invoice_items, raw_text)
         parsed_total = round(sum(item["amount"] for item in items), 2)
 
-        await _set_invoice_job(job_id, {
-            "parsed_count": len(items),
-            "parsed_total": parsed_total,
-            "expected_total": expected_total,
-        })
+        await _set_invoice_job(
+            job_id,
+            {
+                "parsed_count": len(items),
+                "parsed_total": parsed_total,
+                "expected_total": expected_total,
+            },
+        )
 
         if not items:
-            raise ValueError("A IA não conseguiu identificar lançamentos da fatura. Adicione os gastos manualmente.")
+            raise ValueError(
+                "A IA não conseguiu identificar lançamentos da fatura. Adicione os gastos manualmente."
+            )
 
         if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
             raise ValueError(
@@ -1355,45 +1646,61 @@ async def process_invoice_reader_job(job_id: str, user_id: str, requested_month:
             await db.expenses.insert_one(expense_doc)
             created_ids.append(expense_doc["expense_id"])
 
-        await _set_invoice_job(job_id, {
-            "status": "completed",
-            "created_expense_ids": created_ids,
-            "errors": [],
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        })
+        await _set_invoice_job(
+            job_id,
+            {
+                "status": "completed",
+                "created_expense_ids": created_ids,
+                "errors": [],
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     except Exception as exc:
         errors.append(str(exc))
-        await _set_invoice_job(job_id, {
-            "status": "failed",
-            "errors": errors,
-            "created_expense_ids": created_ids,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-        })
+        await _set_invoice_job(
+            job_id,
+            {
+                "status": "failed",
+                "errors": errors,
+                "created_expense_ids": created_ids,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
 
 # ============ FINANCIAL ENDPOINTS ============
+
 
 # Methods
 @api_router.get("/finance/methods")
 async def get_methods(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     await ensure_default_financial_methods(user.user_id)
-    methods = await db.financial_methods.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
+    methods = await db.financial_methods.find(
+        {"user_id": user.user_id}, {"_id": 0}
+    ).to_list(100)
     return methods
+
 
 @api_router.post("/finance/methods", status_code=201)
 async def create_method(
     data: MethodCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
 
-    existing_methods = await db.financial_methods.find({"user_id": user.user_id}, {"_id": 0, "name": 1}).to_list(200)
-    method_exists = any(normalize_method_name(method.get("name", "")) == normalize_method_name(data.name) for method in existing_methods)
+    existing_methods = await db.financial_methods.find(
+        {"user_id": user.user_id}, {"_id": 0, "name": 1}
+    ).to_list(200)
+    method_exists = any(
+        normalize_method_name(method.get("name", ""))
+        == normalize_method_name(data.name)
+        for method in existing_methods
+    )
     if method_exists:
         raise HTTPException(status_code=409, detail="Method already exists")
 
@@ -1401,27 +1708,31 @@ async def create_method(
         "method_id": f"method_{uuid.uuid4().hex[:12]}",
         "user_id": user.user_id,
         "name": data.name,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.financial_methods.insert_one(method)
     return sanitize_mongo_document(method)
+
 
 # Categories
 @api_router.get("/finance/categories")
 async def get_categories(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
+    categories = await db.financial_categories.find(
+        {"user_id": user.user_id}, {"_id": 0}
+    ).to_list(1000)
     return categories
+
 
 @api_router.post("/finance/categories", status_code=201)
 async def create_category(
     data: CategoryCreate,
     response: Response = None,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     normalized_name = normalize_category_name(data.name)
@@ -1429,12 +1740,18 @@ async def create_category(
     if not normalized_name:
         raise HTTPException(status_code=400, detail="Category name is required")
 
-    existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
-    existing = next((
-        category
-        for category in existing_categories
-        if category.get("type", "expense") == data.type and normalize_category_key(category.get("name", "")) == normalized_key
-    ), None)
+    existing_categories = await db.financial_categories.find(
+        {"user_id": user.user_id}, {"_id": 0}
+    ).to_list(1000)
+    existing = next(
+        (
+            category
+            for category in existing_categories
+            if category.get("type", "expense") == data.type
+            and normalize_category_key(category.get("name", "")) == normalized_key
+        ),
+        None,
+    )
     if existing:
         if response is not None:
             response.status_code = 200
@@ -1446,29 +1763,34 @@ async def create_category(
         "name": normalized_name,
         "name_key": normalized_key,
         "type": data.type,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
         await db.financial_categories.insert_one(category)
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
             {"user_id": user.user_id, "name_key": normalized_key, "type": data.type},
-            {"_id": 0}
+            {"_id": 0},
         )
         if duplicate:
             if response is not None:
                 response.status_code = 200
             return duplicate
-        logger.exception("Duplicate key while creating category %s for user %s", normalized_name, user.user_id)
+        logger.exception(
+            "Duplicate key while creating category %s for user %s",
+            normalized_name,
+            user.user_id,
+        )
         raise HTTPException(status_code=409, detail="Category already exists")
     return sanitize_mongo_document(category)
+
 
 @api_router.put("/finance/categories/{category_id}")
 async def update_category(
     category_id: str,
     data: CategoryUpdate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     normalized_name = normalize_category_name(data.name)
@@ -1476,35 +1798,54 @@ async def update_category(
         raise HTTPException(status_code=400, detail="Category name is required")
 
     existing = await db.financial_categories.find_one(
-        {"category_id": category_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"category_id": category_id, "user_id": user.user_id}, {"_id": 0}
     )
     if not existing:
         raise HTTPException(status_code=404, detail="Category not found")
 
     normalized_key = normalize_category_key(data.name)
     existing_type = existing.get("type", "expense")
-    if normalize_category_key(existing.get("name", "")) != normalized_key or existing_type != data.type:
-        existing_categories = await db.financial_categories.find({"user_id": user.user_id}, {"_id": 0, "category_id": 1, "name": 1, "type": 1}).to_list(1000)
-        duplicate = next((
-            category
-            for category in existing_categories
-            if category.get("category_id") != category_id
-            and category.get("type", "expense") == data.type
-            and normalize_category_key(category.get("name", "")) == normalized_key
-        ), None)
+    if (
+        normalize_category_key(existing.get("name", "")) != normalized_key
+        or existing_type != data.type
+    ):
+        existing_categories = await db.financial_categories.find(
+            {"user_id": user.user_id},
+            {"_id": 0, "category_id": 1, "name": 1, "type": 1},
+        ).to_list(1000)
+        duplicate = next(
+            (
+                category
+                for category in existing_categories
+                if category.get("category_id") != category_id
+                and category.get("type", "expense") == data.type
+                and normalize_category_key(category.get("name", "")) == normalized_key
+            ),
+            None,
+        )
         if duplicate:
             raise HTTPException(status_code=409, detail="Category already exists")
 
     try:
         await db.financial_categories.update_one(
             {"category_id": category_id, "user_id": user.user_id},
-            {"$set": {"name": normalized_name, "name_key": normalized_key, "type": data.type}}
+            {
+                "$set": {
+                    "name": normalized_name,
+                    "name_key": normalized_key,
+                    "type": data.type,
+                }
+            },
         )
     except DuplicateKeyError:
         duplicate = await db.financial_categories.find_one(
-            {"user_id": user.user_id, "name_key": normalized_key, "type": data.type, "category_id": {"$ne": category_id}},
-            {"_id": 0, "category_id": 1}
+            {
+                "user_id": user.user_id,
+                "name_key": normalized_key,
+                "type": data.type,
+                "category_id": {"$ne": category_id},
+            },
+            {"_id": 0, "category_id": 1},
         )
         if duplicate:
             raise HTTPException(status_code=409, detail="Category already exists")
@@ -1519,31 +1860,30 @@ async def update_category(
         if existing_type == "income":
             await db.incomes.update_many(
                 {"user_id": user.user_id, "category": existing.get("name")},
-                {"$set": {"category": normalized_name}}
+                {"$set": {"category": normalized_name}},
             )
         else:
             await db.expenses.update_many(
                 {"user_id": user.user_id, "category": existing.get("name")},
-                {"$set": {"category": normalized_name}}
+                {"$set": {"category": normalized_name}},
             )
 
     category = await db.financial_categories.find_one(
-        {"category_id": category_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"category_id": category_id, "user_id": user.user_id}, {"_id": 0}
     )
     return category
+
 
 @api_router.delete("/finance/categories/{category_id}")
 async def delete_category(
     category_id: str,
     force: bool = False,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     category = await db.financial_categories.find_one(
-        {"category_id": category_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"category_id": category_id, "user_id": user.user_id}, {"_id": 0}
     )
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -1551,48 +1891,54 @@ async def delete_category(
     category_type = category.get("type", "expense")
     collection = db.incomes if category_type == "income" else db.expenses
 
-    linked_items_count = await collection.count_documents({
-        "user_id": user.user_id,
-        "category": category["name"]
-    })
+    linked_items_count = await collection.count_documents(
+        {"user_id": user.user_id, "category": category["name"]}
+    )
 
     if linked_items_count > 0 and not force:
         raise HTTPException(
             status_code=409,
             detail={
                 "message": "Category has linked items",
-                "linked_items_count": linked_items_count
-            }
+                "linked_items_count": linked_items_count,
+            },
         )
 
-    await db.financial_categories.delete_one({"category_id": category_id, "user_id": user.user_id})
+    await db.financial_categories.delete_one(
+        {"category_id": category_id, "user_id": user.user_id}
+    )
     if linked_items_count > 0:
-        await collection.delete_many({"user_id": user.user_id, "category": category["name"]})
+        await collection.delete_many(
+            {"user_id": user.user_id, "category": category["name"]}
+        )
 
     return {"message": "Category deleted", "deleted_items": linked_items_count}
+
 
 # Expenses
 @api_router.get("/finance/expenses")
 async def get_expenses(
     month: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     expenses = await db.expenses.find(
-        {"user_id": user.user_id, "month": month},
-        {"_id": 0}
+        {"user_id": user.user_id, "month": month}, {"_id": 0}
     ).to_list(5000)
     return expenses
+
 
 @api_router.post("/finance/expenses", status_code=201)
 async def create_expense(
     data: ExpenseCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="expense")
+    resolved_category_name = await resolve_user_category_name(
+        user.user_id, data.category, expected_type="expense"
+    )
     if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
@@ -1605,21 +1951,24 @@ async def create_expense(
         "category": resolved_category_name,
         "subcategory": data.subcategory,
         "month": data.month,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.expenses.insert_one(expense)
     return sanitize_mongo_document(expense)
+
 
 @api_router.put("/finance/expenses/{expense_id}")
 async def update_expense(
     expense_id: str,
     data: ExpenseUpdate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
 
-    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="expense")
+    resolved_category_name = await resolve_user_category_name(
+        user.user_id, data.category, expected_type="expense"
+    )
     if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid category")
 
@@ -1641,45 +1990,50 @@ async def update_expense(
         raise HTTPException(status_code=404, detail="Expense not found")
 
     expense = await db.expenses.find_one(
-        {"expense_id": expense_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"expense_id": expense_id, "user_id": user.user_id}, {"_id": 0}
     )
     return expense
+
 
 @api_router.delete("/finance/expenses/{expense_id}")
 async def delete_expense(
     expense_id: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    result = await db.expenses.delete_one({"expense_id": expense_id, "user_id": user.user_id})
+    result = await db.expenses.delete_one(
+        {"expense_id": expense_id, "user_id": user.user_id}
+    )
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"message": "Deleted"}
+
 
 # Incomes
 @api_router.get("/finance/incomes")
 async def get_incomes(
     month: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     incomes = await db.incomes.find(
-        {"user_id": user.user_id, "month": month},
-        {"_id": 0}
+        {"user_id": user.user_id, "month": month}, {"_id": 0}
     ).to_list(5000)
     return incomes
+
 
 @api_router.post("/finance/incomes", status_code=201)
 async def create_income(
     data: IncomeCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    resolved_category_name = await resolve_user_category_name(user.user_id, data.category, expected_type="income")
+    resolved_category_name = await resolve_user_category_name(
+        user.user_id, data.category, expected_type="income"
+    )
     if not resolved_category_name:
         raise HTTPException(status_code=400, detail="Invalid income category")
 
@@ -1690,38 +2044,43 @@ async def create_income(
         "amount": data.amount,
         "category": resolved_category_name,
         "month": data.month,
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.incomes.insert_one(income)
     return sanitize_mongo_document(income)
+
 
 @api_router.delete("/finance/incomes/{income_id}")
 async def delete_income(
     income_id: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    result = await db.incomes.delete_one({"income_id": income_id, "user_id": user.user_id})
+    result = await db.incomes.delete_one(
+        {"income_id": income_id, "user_id": user.user_id}
+    )
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Income not found")
     return {"message": "Deleted"}
+
 
 # Savings
 @api_router.get("/finance/savings")
 async def get_savings(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     savings = await db.savings.find({"user_id": user.user_id}, {"_id": 0}).to_list(100)
     return savings
 
+
 @api_router.post("/finance/savings", status_code=201)
 async def create_savings(
     data: SavingsCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     savings = {
@@ -1731,57 +2090,68 @@ async def create_savings(
         "type": data.type,
         "amount": data.amount,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.savings.insert_one(savings)
     return sanitize_mongo_document(savings)
+
 
 @api_router.put("/finance/savings/{savings_id}")
 async def update_savings(
     savings_id: str,
     amount: float,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
     result = await db.savings.update_one(
         {"savings_id": savings_id, "user_id": user.user_id},
-        {"$set": {"amount": amount, "updated_at": datetime.now(timezone.utc).isoformat()}}
+        {
+            "$set": {
+                "amount": amount,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Savings not found")
     updated = await db.savings.find_one({"savings_id": savings_id}, {"_id": 0})
     return updated
 
+
 # Summary
 @api_router.get("/finance/summary")
 async def get_summary(
     month: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    
+
     # Get incomes
-    incomes = await db.incomes.find({"user_id": user.user_id, "month": month}, {"_id": 0}).to_list(1000)
+    incomes = await db.incomes.find(
+        {"user_id": user.user_id, "month": month}, {"_id": 0}
+    ).to_list(1000)
     total_income = sum(i["amount"] for i in incomes)
-    
+
     # Get expenses
-    expenses = await db.expenses.find({"user_id": user.user_id, "month": month}, {"_id": 0}).to_list(1000)
+    expenses = await db.expenses.find(
+        {"user_id": user.user_id, "month": month}, {"_id": 0}
+    ).to_list(1000)
     total_expenses = sum(e["amount"] for e in expenses)
-    
+
     # Category breakdown
     category_breakdown = {}
     for expense in expenses:
         cat = expense["category"]
         category_breakdown[cat] = category_breakdown.get(cat, 0) + expense["amount"]
-    
+
     return {
         "month": month,
         "total_income": total_income,
         "total_expenses": total_expenses,
         "balance": total_income - total_expenses,
-        "category_breakdown": category_breakdown
+        "category_breakdown": category_breakdown,
     }
 
 
@@ -1790,14 +2160,17 @@ async def create_invoice_reader_job(
     requested_month: str = Form(...),
     file: UploadFile = File(...),
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
 
     if not re.match(r"^\d{4}-\d{2}$", requested_month or ""):
         raise HTTPException(status_code=400, detail="Mês inválido. Use YYYY-MM")
 
-    if (file.content_type or "").lower() not in {"application/pdf", "application/x-pdf"} and not (file.filename or "").lower().endswith(".pdf"):
+    if (file.content_type or "").lower() not in {
+        "application/pdf",
+        "application/x-pdf",
+    } and not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
 
     pdf_bytes = await file.read()
@@ -1826,7 +2199,11 @@ async def create_invoice_reader_job(
         "updated_at": now_iso,
     }
     await db.invoice_reader_jobs.insert_one(job)
-    asyncio.create_task(process_invoice_reader_job(job["job_id"], user.user_id, requested_month, job["filename"], pdf_bytes))
+    asyncio.create_task(
+        process_invoice_reader_job(
+            job["job_id"], user.user_id, requested_month, job["filename"], pdf_bytes
+        )
+    )
     return sanitize_mongo_document(job)
 
 
@@ -1834,16 +2211,15 @@ async def create_invoice_reader_job(
 async def get_invoice_reader_jobs(
     limit: int = Query(20, ge=1, le=100),
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
+    await cleanup_expired_invoice_jobs(user.user_id)
     jobs = await db.invoice_reader_jobs.find(
-        {"user_id": user.user_id},
-        {"_id": 0}
+        {"user_id": user.user_id}, {"_id": 0}
     ).to_list(limit)
     jobs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
     return jobs[:limit]
-
 
     habits = []
     for i, h in enumerate(default_habits):
@@ -1854,50 +2230,50 @@ async def get_invoice_reader_jobs(
             "color": h["color"],
             "icon": h["icon"],
             "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%d"),
+            "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime(
+                "%Y-%m-%d"
+            ),
             "frequency": "daily",
             "order": i,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         habits.append(habit)
-    
+
     await db.habits.insert_many(habits)
-    
+
     return {"message": f"Created {len(habits)} default habits"}
 
 
 # ============ COMPLETIONS ENDPOINTS ============
+
 
 @api_router.get("/completions")
 async def get_completions(
     year: int,
     month: int,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Get completions for a month"""
     user = await get_current_user(session_token, authorization)
-    
+
     # Date range for month
     start_date = f"{year}-{month:02d}-01"
     if month == 12:
         end_date = f"{year+1}-01-01"
     else:
         end_date = f"{year}-{month+1:02d}-01"
-    
+
     completions = await db.habit_completions.find(
-        {
-            "user_id": user.user_id,
-            "date": {"$gte": start_date, "$lt": end_date}
-        },
-        {"_id": 0}
+        {"user_id": user.user_id, "date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0},
     ).to_list(1000)
-    
+
     # Parse datetimes
     for comp in completions:
-        if isinstance(comp.get('completed_at'), str):
-            comp['completed_at'] = datetime.fromisoformat(comp['completed_at'])
-    
+        if isinstance(comp.get("completed_at"), str):
+            comp["completed_at"] = datetime.fromisoformat(comp["completed_at"])
+
     return completions
 
 
@@ -1905,44 +2281,49 @@ async def get_completions(
 async def toggle_completion(
     data: CompletionToggle,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Toggle habit completion for a date"""
     user = await get_current_user(session_token, authorization)
-    
+
     # Verify habit ownership
     habit = await db.habits.find_one(
-        {"habit_id": data.habit_id, "user_id": user.user_id},
-        {"_id": 0}
+        {"habit_id": data.habit_id, "user_id": user.user_id}, {"_id": 0}
     )
     if not habit:
         raise HTTPException(status_code=404, detail="Habit not found")
 
-    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+    user_doc = await db.users.find_one(
+        {"user_id": user.user_id}, {"_id": 0, "settings": 1}
+    )
     today_key = get_local_day_key(get_user_timezone(user_doc or {}))
     selected_date = parse_day_key(data.date)
     if data.date != today_key:
-        raise HTTPException(status_code=400, detail="Você só pode concluir objetivos no dia de hoje")
+        raise HTTPException(
+            status_code=400, detail="Você só pode concluir objetivos no dia de hoje"
+        )
 
     habit_start = habit.get("start_date")
     habit_end = habit.get("end_date")
     if habit_start and selected_date < parse_day_key(habit_start):
-        raise HTTPException(status_code=400, detail="Date is before this objective period")
+        raise HTTPException(
+            status_code=400, detail="Date is before this objective period"
+        )
     if habit_end and selected_date > parse_day_key(habit_end):
-        raise HTTPException(status_code=400, detail="Date is after this objective period")
+        raise HTTPException(
+            status_code=400, detail="Date is after this objective period"
+        )
     if not is_habit_scheduled_for_date(habit, selected_date):
-        raise HTTPException(status_code=400, detail="Este objetivo não está programado para este dia")
-    
+        raise HTTPException(
+            status_code=400, detail="Este objetivo não está programado para este dia"
+        )
+
     # Check if completion exists
     existing = await db.habit_completions.find_one(
-        {
-            "habit_id": data.habit_id,
-            "user_id": user.user_id,
-            "date": data.date
-        },
-        {"_id": 0}
+        {"habit_id": data.habit_id, "user_id": user.user_id, "date": data.date},
+        {"_id": 0},
     )
-    
+
     if existing:
         # Toggle
         new_completed = not existing["completed"]
@@ -1951,9 +2332,13 @@ async def toggle_completion(
             {
                 "$set": {
                     "completed": new_completed,
-                    "completed_at": datetime.now(timezone.utc).isoformat() if new_completed else None
+                    "completed_at": (
+                        datetime.now(timezone.utc).isoformat()
+                        if new_completed
+                        else None
+                    ),
                 }
-            }
+            },
         )
         return {"completed": new_completed}
     else:
@@ -1964,7 +2349,7 @@ async def toggle_completion(
             "user_id": user.user_id,
             "date": data.date,
             "completed": True,
-            "completed_at": datetime.now(timezone.utc).isoformat()
+            "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.habit_completions.insert_one(completion)
         return {"completed": True}
@@ -1972,17 +2357,20 @@ async def toggle_completion(
 
 # ============ NOTIFICATIONS ENDPOINTS ============
 
+
 @api_router.get("/notifications")
 async def get_notifications(
     limit: int = Query(30, ge=1, le=100),
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    items = await db.notifications.find(
-        {"user_id": user.user_id},
-        {"_id": 0}
-    ).sort("created_at", -1).limit(limit).to_list(limit)
+    items = (
+        await db.notifications.find({"user_id": user.user_id}, {"_id": 0})
+        .sort("created_at", -1)
+        .limit(limit)
+        .to_list(limit)
+    )
     return items
 
 
@@ -1990,10 +2378,12 @@ async def get_notifications(
 async def refresh_notifications(
     send_email: bool = True,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
-    user_doc = await db.users.find_one({"user_id": user.user_id}, {"_id": 0, "settings": 1})
+    user_doc = await db.users.find_one(
+        {"user_id": user.user_id}, {"_id": 0, "settings": 1}
+    )
     tz_name = get_user_timezone(user_doc or {})
 
     try:
@@ -2007,7 +2397,7 @@ async def refresh_notifications(
     habits = await db.habits.find({"user_id": user.user_id}, {"_id": 0}).to_list(1000)
     completions = await db.habit_completions.find(
         {"user_id": user.user_id, "date": {"$gte": start_key, "$lt": end_key}},
-        {"_id": 0}
+        {"_id": 0},
     ).to_list(200)
 
     generated = compose_goal_notifications(habits, completions, now_local)
@@ -2017,16 +2407,22 @@ async def refresh_notifications(
     if send_email and new_items:
         email_sent = await dispatch_email_notifications(user, new_items)
 
-    items = await db.notifications.find({"user_id": user.user_id}, {"_id": 0}).sort("created_at", -1).limit(30).to_list(30)
+    items = (
+        await db.notifications.find({"user_id": user.user_id}, {"_id": 0})
+        .sort("created_at", -1)
+        .limit(30)
+        .to_list(30)
+    )
     return {"items": items, "email_sent": email_sent, "created_count": len(new_items)}
 
 
 # ============ ADMIN ENDPOINTS ============
 
+
 @api_router.get("/admin/users")
 async def admin_get_users(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Get all users (admin only)"""
     await require_admin_user(session_token, authorization)
@@ -2034,8 +2430,8 @@ async def admin_get_users(
     users = await db.users.find({}, {"_id": 0}).to_list(1000)
 
     for u in users:
-        if isinstance(u.get('created_at'), str):
-            u['created_at'] = datetime.fromisoformat(u['created_at'])
+        if isinstance(u.get("created_at"), str):
+            u["created_at"] = datetime.fromisoformat(u["created_at"])
 
     return users
 
@@ -2043,7 +2439,7 @@ async def admin_get_users(
 @api_router.get("/admin/stats")
 async def admin_get_stats(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     """Get platform stats (admin only)"""
     await require_admin_user(session_token, authorization)
@@ -2055,7 +2451,7 @@ async def admin_get_stats(
     return {
         "total_users": total_users,
         "total_habits": total_habits,
-        "total_completions": total_completions
+        "total_completions": total_completions,
     }
 
 
@@ -2067,7 +2463,7 @@ async def admin_list_quotes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2079,11 +2475,16 @@ async def admin_list_quotes(
     if q:
         query["$or"] = [
             {"text": {"$regex": re.escape(q), "$options": "i"}},
-            {"author": {"$regex": re.escape(q), "$options": "i"}}
+            {"author": {"$regex": re.escape(q), "$options": "i"}},
         ]
 
     total = await db.quotes.count_documents(query)
-    cursor = db.quotes.find(query, {"_id": 0}).sort("updated_at", -1).skip((page - 1) * page_size).limit(page_size)
+    cursor = (
+        db.quotes.find(query, {"_id": 0})
+        .sort("updated_at", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
     items = await cursor.to_list(page_size)
 
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -2093,7 +2494,7 @@ async def admin_list_quotes(
 async def admin_create_quote(
     payload: QuoteCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2111,7 +2512,7 @@ async def admin_create_quote(
         "active": payload.active,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author)
+        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author),
     }
     await db.quotes.insert_one(quote)
     quote.pop("dedupe_key", None)
@@ -2123,7 +2524,7 @@ async def admin_update_quote(
     quote_id: str,
     payload: QuoteCreate,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2134,7 +2535,7 @@ async def admin_update_quote(
         "tags": [t.strip() for t in payload.tags if t.strip()],
         "active": payload.active,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author)
+        "dedupe_key": normalize_quote_key(payload.mode, payload.text, payload.author),
     }
 
     result = await db.quotes.update_one({"id": quote_id}, {"$set": update})
@@ -2149,7 +2550,7 @@ async def admin_update_quote(
 async def admin_delete_quote(
     quote_id: str,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
     result = await db.quotes.delete_one({"id": quote_id})
@@ -2162,7 +2563,7 @@ async def admin_delete_quote(
 async def admin_bulk_delete_quotes(
     payload: QuoteBulkDeletePayload,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2170,9 +2571,15 @@ async def admin_bulk_delete_quotes(
     if not ids:
         raise HTTPException(status_code=400, detail="No ids provided")
 
-    existing = await db.quotes.find({"id": {"$in": ids}}, {"_id": 0, "id": 1}).to_list(len(ids))
+    existing = await db.quotes.find({"id": {"$in": ids}}, {"_id": 0, "id": 1}).to_list(
+        len(ids)
+    )
     existing_ids = {item["id"] for item in existing}
-    failed = [{"id": quote_id, "reason": "not_found"} for quote_id in ids if quote_id not in existing_ids]
+    failed = [
+        {"id": quote_id, "reason": "not_found"}
+        for quote_id in ids
+        if quote_id not in existing_ids
+    ]
 
     if existing_ids:
         await db.quotes.delete_many({"id": {"$in": list(existing_ids)}})
@@ -2185,7 +2592,7 @@ async def admin_import_quotes(
     payload: QuoteImportPayload,
     strict: bool = False,
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2197,11 +2604,13 @@ async def admin_import_quotes(
         "criadas": 0,
         "ignoradas_duplicadas": 0,
         "invalidas": 0,
-        "erros": []
+        "erros": [],
     }
 
     existing_docs = await db.quotes.find({}, {"_id": 0, "dedupe_key": 1}).to_list(10000)
-    existing_keys = {doc.get("dedupe_key") for doc in existing_docs if doc.get("dedupe_key")}
+    existing_keys = {
+        doc.get("dedupe_key") for doc in existing_docs if doc.get("dedupe_key")
+    }
 
     valid_docs = []
     for idx, item in enumerate(payload.items):
@@ -2233,7 +2642,7 @@ async def admin_import_quotes(
             "active": item.active,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
-            "dedupe_key": key
+            "dedupe_key": key,
         }
         valid_docs.append(quote)
         existing_keys.add(key)
@@ -2251,7 +2660,7 @@ async def admin_import_quotes(
 @api_router.post("/admin/quotes/import-seed")
 async def admin_import_seed_quotes(
     session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None),
 ):
     await require_admin_user(session_token, authorization)
 
@@ -2277,7 +2686,10 @@ async def health_check():
         await db.command("ping")
     except Exception as exc:
         checks["mongo"] = f"error: {exc}"
-        raise HTTPException(status_code=503, detail={"status": "degraded", "timestamp": timestamp, "checks": checks})
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "degraded", "timestamp": timestamp, "checks": checks},
+        )
 
     try:
         await db.financial_categories.estimated_document_count()
@@ -2285,7 +2697,10 @@ async def health_check():
         await db.financial_methods.estimated_document_count()
     except Exception as exc:
         checks["collections"] = f"error: {exc}"
-        raise HTTPException(status_code=503, detail={"status": "degraded", "timestamp": timestamp, "checks": checks})
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "degraded", "timestamp": timestamp, "checks": checks},
+        )
 
     return {"status": "ok", "timestamp": timestamp, "checks": checks}
 
@@ -2299,12 +2714,12 @@ DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://localhost:5173,https://kolb
 def _parse_cors_origins(raw_origins: str) -> list[str]:
     """Normalize CORS origins from env to avoid mismatch issues."""
     origins = []
-    for origin in raw_origins.split(','):
+    for origin in raw_origins.split(","):
         value = origin.strip()
         if not value:
             continue
         if value != "*":
-            value = value.rstrip('/')
+            value = value.rstrip("/")
         origins.append(value)
 
     return origins
@@ -2326,8 +2741,7 @@ app.add_middleware(
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -2338,13 +2752,18 @@ async def create_database_indexes():
     await db.expenses.create_index([("user_id", 1), ("month", 1)])
     await db.expenses.create_index([("user_id", 1), ("category", 1)])
     await ensure_financial_category_indexes()
-    await db.financial_categories.create_index([("user_id", 1), ("type", 1), ("name_key", 1)], unique=True)
+    await db.financial_categories.create_index(
+        [("user_id", 1), ("type", 1), ("name_key", 1)], unique=True
+    )
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
     await db.invoice_reader_jobs.create_index([("user_id", 1), ("created_at", -1)])
     await db.invoice_reader_jobs.create_index([("job_id", 1)], unique=True)
     await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
-    await db.notifications.create_index([("user_id", 1), ("dedupe_key", 1)], unique=True)
+    await db.notifications.create_index(
+        [("user_id", 1), ("dedupe_key", 1)], unique=True
+    )
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
