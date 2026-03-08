@@ -349,3 +349,31 @@ def test_invoice_reader_job_list(fake_backend):
 
     jobs = run(server.get_invoice_reader_jobs(limit=10))
     assert [job["job_id"] for job in jobs] == ["invjob_2", "invjob_1"]
+
+
+
+def test_invoice_reader_ai_extractor_uses_openai_response(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "output_text": '{"items":[{"name":"AZUL LINHAS IP 8/12","amount":530.33},{"name":"JIM.COM *3726A4/05","amount":57.98}]}'
+            }
+
+    class FakeRequests:
+        @staticmethod
+        def post(*_args, **_kwargs):
+            return FakeResponse()
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "requests", FakeRequests)
+
+    items = server.extract_invoice_items_with_ai("fatura exemplo")
+    assert len(items) == 2
+    assert items[0]["name"] == "AZUL LINHAS IP 8/12"
+    assert items[0]["amount"] == 530.33
