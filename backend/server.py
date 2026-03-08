@@ -18,6 +18,9 @@ import asyncio
 import smtplib
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
+from io import BytesIO
+import importlib
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1069,6 +1072,130 @@ def parse_brl_number(raw_value: str) -> Optional[float]:
         return None
 
 
+def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float] = None) -> List[dict]:
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return []
+
+    snippet = (raw_text or "")[:24000]
+    expected_hint = ""
+    if expected_total is not None:
+        expected_hint = (
+            f"Total esperado da fatura: {expected_total:.2f}. "
+            "Priorize linhas de compra cuja soma bata com esse total.\n"
+        )
+
+    prompt = (
+        "Extraia apenas lançamentos de compra de uma fatura de cartão. "
+        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
+        "Considere layouts de bancos brasileiros variados (Itau, Nubank, Bradesco, Santander e outros). "
+        "Responda somente JSON válido no formato: "
+        "{\"items\":[{\"name\":\"texto\",\"amount\":123.45}]}. "
+        "Use amount com ponto decimal e valor positivo.\n"
+        f"{expected_hint}\n"
+        f"Texto bruto:\n{snippet}"
+    )
+
+    payload = {
+        "model": os.getenv("OPENAI_INVOICE_MODEL", "gpt-4.1-mini"),
+        "input": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Você é um extrator de lançamentos de fatura. Retorne apenas JSON.",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": prompt,
+                    }
+                ],
+            },
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "invoice_items",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "amount": {"type": "number"},
+                                },
+                                "required": ["name", "amount"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+    }
+
+    try:
+        import requests
+
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=40,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except Exception:
+        return []
+
+    output_text = body.get("output_text")
+    if not output_text:
+        for item in body.get("output", []):
+            for content in item.get("content", []):
+                if content.get("type") == "output_text" and content.get("text"):
+                    output_text = content["text"]
+                    break
+            if output_text:
+                break
+
+    if not output_text:
+        return []
+
+    try:
+        parsed = json.loads(output_text)
+    except json.JSONDecodeError:
+        return []
+
+    cleaned = []
+    seen = set()
+    for entry in parsed.get("items", []):
+        name = str(entry.get("name", "")).strip()
+        amount_raw = entry.get("amount")
+        amount = float(amount_raw) if isinstance(amount_raw, (int, float)) else parse_brl_number(str(amount_raw))
+        if not name or amount is None or amount <= 0:
+            continue
+        key = (name.casefold(), round(amount, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append({"name": name, "amount": round(amount, 2)})
+    return cleaned
+
+
 def extract_expected_total(raw_text: str) -> Optional[float]:
     patterns = [
         r"total\s+da\s+fatura[^0-9]{0,20}([0-9\.,]+)",
@@ -1126,6 +1253,19 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
+    extracted_pages: List[str] = []
+    pypdf_spec = importlib.util.find_spec("pypdf")
+    if pypdf_spec is not None:
+        pypdf_module = importlib.import_module("pypdf")
+        reader = pypdf_module.PdfReader(BytesIO(pdf_bytes or b""))
+        for page in reader.pages:
+            text = (page.extract_text() or "").strip()
+            if text:
+                extracted_pages.append(text)
+
+    if extracted_pages:
+        return "\n".join(extracted_pages)
+
     # Fallback lightweight extraction for text-based PDFs.
     decoded = (pdf_bytes or b"").decode("latin-1", errors="ignore")
     decoded = decoded.replace("\r", "\n")
@@ -1181,9 +1321,9 @@ async def process_invoice_reader_job(job_id: str, user_id: str, requested_month:
         if not method:
             raise ValueError("Método padrão de cartão não encontrado")
 
-        items = extract_invoice_items(raw_text)
-        parsed_total = round(sum(item["amount"] for item in items), 2)
         expected_total = extract_expected_total(raw_text)
+        items = await asyncio.to_thread(extract_invoice_items_with_ai, raw_text, expected_total)
+        parsed_total = round(sum(item["amount"] for item in items), 2)
 
         await _set_invoice_job(job_id, {
             "parsed_count": len(items),
@@ -1192,11 +1332,11 @@ async def process_invoice_reader_job(job_id: str, user_id: str, requested_month:
         })
 
         if not items:
-            raise ValueError("Nenhum lançamento de compra foi identificado no PDF")
+            raise ValueError("A IA não conseguiu identificar lançamentos da fatura. Adicione os gastos manualmente.")
 
         if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
             raise ValueError(
-                f"Soma dos lançamentos ({parsed_total:.2f}) diferente do total da fatura ({expected_total:.2f})"
+                f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
             )
 
         now_iso = datetime.now(timezone.utc).isoformat()
