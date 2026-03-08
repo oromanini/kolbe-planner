@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -461,13 +462,15 @@ Total da fatura R$ 591,89
     assert server.detect_card_suffix(raw) == "7071"
 
 
-def test_invoice_reader_job_list(fake_backend):
+def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
+    now = datetime.now(timezone.utc)
     fake_backend.invoice_reader_jobs.docs.append(
         {
             "job_id": "invjob_1",
             "user_id": "user_1",
             "status": "queued",
-            "created_at": "2026-03-01T10:00:00+00:00",
+            "created_at": (now - timedelta(minutes=2)).isoformat(),
+            "finished_at": None,
         }
     )
     fake_backend.invoice_reader_jobs.docs.append(
@@ -475,12 +478,25 @@ def test_invoice_reader_job_list(fake_backend):
             "job_id": "invjob_2",
             "user_id": "user_1",
             "status": "completed",
-            "created_at": "2026-03-02T10:00:00+00:00",
+            "created_at": (now - timedelta(minutes=1)).isoformat(),
+            "finished_at": (now - timedelta(minutes=1)).isoformat(),
+        }
+    )
+    fake_backend.invoice_reader_jobs.docs.append(
+        {
+            "job_id": "invjob_3",
+            "user_id": "user_1",
+            "status": "failed",
+            "created_at": (now - timedelta(minutes=10)).isoformat(),
+            "finished_at": (now - timedelta(minutes=10)).isoformat(),
         }
     )
 
     jobs = run(server.get_invoice_reader_jobs(limit=10))
     assert [job["job_id"] for job in jobs] == ["invjob_2", "invjob_1"]
+    assert all(
+        doc["job_id"] != "invjob_3" for doc in fake_backend.invoice_reader_jobs.docs
+    )
 
 
 def test_invoice_reader_ai_extractor_uses_openai_response(monkeypatch):

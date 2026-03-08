@@ -1152,6 +1152,39 @@ class InvoiceImportRequest(BaseModel):
     requested_month: str
 
 
+INVOICE_JOB_RETENTION_MINUTES = 5
+
+
+def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+async def cleanup_expired_invoice_jobs(user_id: str):
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=INVOICE_JOB_RETENTION_MINUTES
+    )
+    jobs = await db.invoice_reader_jobs.find(
+        {"user_id": user_id}, {"_id": 0, "job_id": 1, "status": 1, "finished_at": 1}
+    ).to_list(500)
+    for job in jobs:
+        if job.get("status") not in {"completed", "failed"}:
+            continue
+        finished_at = parse_iso_datetime(job.get("finished_at"))
+        if not finished_at:
+            continue
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=timezone.utc)
+        if finished_at <= cutoff:
+            await db.invoice_reader_jobs.delete_one(
+                {"job_id": job.get("job_id"), "user_id": user_id}
+            )
+
+
 def detect_bank_name(raw_text: str) -> str:
     text = (raw_text or "").lower()
     if "nubank" in text or " nu " in text:
@@ -2181,6 +2214,7 @@ async def get_invoice_reader_jobs(
     authorization: Optional[str] = Header(None),
 ):
     user = await get_current_user(session_token, authorization)
+    await cleanup_expired_invoice_jobs(user.user_id)
     jobs = await db.invoice_reader_jobs.find(
         {"user_id": user.user_id}, {"_id": 0}
     ).to_list(limit)
