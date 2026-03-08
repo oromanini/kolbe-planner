@@ -447,6 +447,26 @@ export default function FinancialPlanner() {
   const expenseCoverage = comparativeData[0].amount > 0
     ? (comparativeData[1].amount / comparativeData[0].amount) * 100
     : 0;
+  const groupedExpensesByCategory = Object.values(
+    expenses.reduce((accumulator, expense) => {
+      const categoryName = expense.category || "Sem categoria";
+      const currentAmount = Number(expense.amount || 0);
+
+      if (!accumulator[categoryName]) {
+        accumulator[categoryName] = { category: categoryName, total: 0, quantity: 0 };
+      }
+
+      accumulator[categoryName].total += currentAmount;
+      accumulator[categoryName].quantity += 1;
+
+      return accumulator;
+    }, {}),
+  )
+    .map((item) => ({
+      ...item,
+      average: item.quantity > 0 ? item.total / item.quantity : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
 
   const expenseCategories = categories.filter((category) => (category.type || "expense") === "expense");
   const incomeCategories = categories.filter((category) => (category.type || "expense") === "income");
@@ -576,6 +596,14 @@ export default function FinancialPlanner() {
             }`}
           >
             Gráficos
+          </button>
+          <button
+            onClick={() => setActiveFinanceTab("categorias")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeFinanceTab === "categorias" ? "bg-primary text-white" : "text-slate-300 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            Gastos por categoria
           </button>
         </div>
 
@@ -979,8 +1007,8 @@ export default function FinancialPlanner() {
           </div>
           </div>
           </div>
-        ) : (
-          <div className="space-y-6">
+        ) : activeFinanceTab === "graficos" ? (
+          <div className="grid lg:grid-cols-2 gap-6">
             <div className="glass-card p-6">
               <h2 className="font-heading text-2xl font-medium text-white mb-6">Distribuição por Categoria</h2>
               {chartData.length > 0 ? (
@@ -1047,6 +1075,37 @@ export default function FinancialPlanner() {
                 </table>
               </div>
             </div>
+          </div>
+        ) : (
+          <div className="glass-card p-6">
+            <h2 className="font-heading text-2xl font-medium text-white mb-2">Gastos agrupados por categoria</h2>
+            <p className="text-slate-400 mb-6">Visão consolidada das despesas do mês selecionado.</p>
+            {groupedExpensesByCategory.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left border border-white/10 rounded-xl overflow-hidden">
+                  <thead className="bg-white/5 text-slate-300">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Categoria</th>
+                      <th className="px-4 py-3 font-medium">Qtd. lançamentos</th>
+                      <th className="px-4 py-3 font-medium">Ticket médio</th>
+                      <th className="px-4 py-3 font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupedExpensesByCategory.map((item) => (
+                      <tr key={item.category} className="border-t border-white/10">
+                        <td className="px-4 py-3 text-slate-200">{item.category}</td>
+                        <td className="px-4 py-3 text-slate-300">{item.quantity}</td>
+                        <td className="px-4 py-3 text-slate-300">{formatCurrency(item.average)}</td>
+                        <td className="px-4 py-3 text-secondary font-medium">{formatCurrency(item.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-slate-400 text-center py-12">Nenhuma despesa cadastrada neste mês.</p>
+            )}
           </div>
         )}
       </main>
