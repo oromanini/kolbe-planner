@@ -1072,18 +1072,27 @@ def parse_brl_number(raw_value: str) -> Optional[float]:
         return None
 
 
-def extract_invoice_items_with_ai(raw_text: str) -> List[dict]:
+def extract_invoice_items_with_ai(raw_text: str, expected_total: Optional[float] = None) -> List[dict]:
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         return []
 
     snippet = (raw_text or "")[:24000]
+    expected_hint = ""
+    if expected_total is not None:
+        expected_hint = (
+            f"Total esperado da fatura: {expected_total:.2f}. "
+            "Priorize linhas de compra cuja soma bata com esse total.\n"
+        )
+
     prompt = (
         "Extraia apenas lançamentos de compra de uma fatura de cartão. "
-        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade e limites. "
+        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
+        "Considere layouts de bancos brasileiros variados (Itau, Nubank, Bradesco, Santander e outros). "
         "Responda somente JSON válido no formato: "
         "{\"items\":[{\"name\":\"texto\",\"amount\":123.45}]}. "
-        "Use amount com ponto decimal e valor positivo.\n\n"
+        "Use amount com ponto decimal e valor positivo.\n"
+        f"{expected_hint}\n"
         f"Texto bruto:\n{snippet}"
     )
 
@@ -1312,14 +1321,21 @@ async def process_invoice_reader_job(job_id: str, user_id: str, requested_month:
         if not method:
             raise ValueError("Método padrão de cartão não encontrado")
 
-        items = extract_invoice_items(raw_text)
         expected_total = extract_expected_total(raw_text)
-        if (not items) or (expected_total is not None and abs(round(sum(item["amount"] for item in items), 2) - expected_total) > 0.01):
-            ai_items = await asyncio.to_thread(extract_invoice_items_with_ai, raw_text)
-            if ai_items:
-                items = ai_items
-
-        parsed_total = round(sum(item["amount"] for item in items), 2)
+        ai_items = await asyncio.to_thread(extract_invoice_items_with_ai, raw_text, expected_total)
+        if ai_items:
+            items = ai_items
+            parsed_total = round(sum(item["amount"] for item in items), 2)
+            if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
+                regex_items = extract_invoice_items(raw_text)
+                if regex_items:
+                    regex_total = round(sum(item["amount"] for item in regex_items), 2)
+                    if abs(regex_total - expected_total) < abs(parsed_total - expected_total):
+                        items = regex_items
+                        parsed_total = regex_total
+        else:
+            items = extract_invoice_items(raw_text)
+            parsed_total = round(sum(item["amount"] for item in items), 2)
 
         await _set_invoice_job(job_id, {
             "parsed_count": len(items),

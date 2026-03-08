@@ -377,3 +377,47 @@ def test_invoice_reader_ai_extractor_uses_openai_response(monkeypatch):
     assert len(items) == 2
     assert items[0]["name"] == "AZUL LINHAS IP 8/12"
     assert items[0]["amount"] == 530.33
+
+
+def test_invoice_reader_prefers_ai_as_primary_parser(fake_backend, monkeypatch):
+    fake_backend.financial_methods.docs.append({"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"})
+
+    regex_calls = {"count": 0}
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
+    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 530.33)
+
+    def fake_regex(_txt):
+        regex_calls["count"] += 1
+        return [{"name": "REGEX ITEM", "amount": 530.33}]
+
+    monkeypatch.setattr(server, "extract_invoice_items", fake_regex)
+    monkeypatch.setattr(
+        server,
+        "extract_invoice_items_with_ai",
+        lambda _txt, _expected=None: [{"name": "AI ITEM", "amount": 530.33}],
+    )
+
+    run(server.process_invoice_reader_job("job_1", "user_1", "2026-03", "fat.pdf", b"pdf"))
+
+    assert regex_calls["count"] == 0
+    assert len(fake_backend.expenses.docs) == 1
+    assert fake_backend.expenses.docs[0]["name"] == "AI ITEM"
+
+
+def test_invoice_reader_uses_regex_when_ai_total_is_worse(fake_backend, monkeypatch):
+    fake_backend.financial_methods.docs.append({"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"})
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
+    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 100.00)
+    monkeypatch.setattr(server, "extract_invoice_items", lambda _txt: [{"name": "REGEX ITEM", "amount": 100.00}])
+    monkeypatch.setattr(
+        server,
+        "extract_invoice_items_with_ai",
+        lambda _txt, _expected=None: [{"name": "AI ITEM", "amount": 90.00}],
+    )
+
+    run(server.process_invoice_reader_job("job_2", "user_1", "2026-03", "fat.pdf", b"pdf"))
+
+    assert len(fake_backend.expenses.docs) == 1
+    assert fake_backend.expenses.docs[0]["name"] == "REGEX ITEM"
