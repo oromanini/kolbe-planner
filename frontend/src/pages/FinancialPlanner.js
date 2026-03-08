@@ -13,6 +13,9 @@ import {
   Receipt,
   Target,
   Landmark,
+  FileText,
+  Camera,
+  Loader2,
 } from "lucide-react";
 import {
   PieChart,
@@ -85,6 +88,9 @@ export default function FinancialPlanner() {
   const [incomePage, setIncomePage] = useState(1);
   const [categoryPage, setCategoryPage] = useState(1);
   const [activeFinanceTab, setActiveFinanceTab] = useState("lancamentos");
+  const [invoiceReaderJobs, setInvoiceReaderJobs] = useState([]);
+  const [invoiceReaderFile, setInvoiceReaderFile] = useState(null);
+  const [isSubmittingInvoiceJob, setIsSubmittingInvoiceJob] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -107,6 +113,16 @@ export default function FinancialPlanner() {
   useEffect(() => {
     setCategoryPage((prev) => Math.min(prev, Math.max(1, Math.ceil(categories.length / ITEMS_PER_PAGE))));
   }, [categories.length]);
+
+  useEffect(() => {
+    if (activeFinanceTab !== "leitor") {
+      return undefined;
+    }
+
+    loadInvoiceReaderJobs();
+    const interval = setInterval(loadInvoiceReaderJobs, 3000);
+    return () => clearInterval(interval);
+  }, [activeFinanceTab]);
 
   const loadData = async () => {
     setIsLoadingFinanceData(true);
@@ -213,6 +229,58 @@ export default function FinancialPlanner() {
         setIsLoadingCategories(false);
       }
       setIsSyncingCategories(false);
+    }
+  };
+
+  const loadInvoiceReaderJobs = async () => {
+    try {
+      const response = await apiRequest(`/finance/invoice-reader/jobs?limit=30`);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Erro ao carregar jobs");
+      }
+      const data = await response.json();
+      setInvoiceReaderJobs(data);
+    } catch (_error) {
+      // silent polling errors
+    }
+  };
+
+  const handleCreateInvoiceJob = async (e) => {
+    e.preventDefault();
+    if (!invoiceReaderFile || isSubmittingInvoiceJob) {
+      return;
+    }
+
+    if (invoiceReaderFile.type !== "application/pdf" && !invoiceReaderFile.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Apenas PDF é aceito por enquanto.");
+      return;
+    }
+
+    setIsSubmittingInvoiceJob(true);
+    try {
+      const formData = new FormData();
+      formData.append("requested_month", currentMonth);
+      formData.append("file", invoiceReaderFile);
+
+      const response = await apiRequest(`/finance/invoice-reader/jobs`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Erro ao iniciar leitura");
+      }
+
+      toast.success("Leitura da fatura iniciada em background.");
+      setInvoiceReaderFile(null);
+      await loadInvoiceReaderJobs();
+      loadData();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Erro ao iniciar leitura da fatura"));
+    } finally {
+      setIsSubmittingInvoiceJob(false);
     }
   };
 
@@ -606,6 +674,14 @@ export default function FinancialPlanner() {
             }`}
           >
             Gastos por categoria
+          </button>
+          <button
+            onClick={() => setActiveFinanceTab("leitor")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeFinanceTab === "leitor" ? "bg-primary text-white" : "text-slate-300 hover:text-white hover:bg-white/10"
+            }`}
+          >
+            Leitor de contas
           </button>
         </div>
 
@@ -1076,6 +1152,73 @@ export default function FinancialPlanner() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        ) : activeFinanceTab === "leitor" ? (
+          <div className="space-y-6">
+            <div className="glass-card p-6">
+              <h2 className="font-heading text-2xl font-medium text-white mb-2">Leitor de contas</h2>
+              <p className="text-slate-300 mb-6">O que deseja fazer?</p>
+              <div className="flex flex-wrap gap-3">
+                <button className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white">
+                  <FileText className="w-4 h-4" />
+                  Ler fatura de cartão
+                </button>
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-slate-300 opacity-80 cursor-not-allowed"
+                >
+                  <Camera className="w-4 h-4" />
+                  Ler cupom fiscal <span className="text-[10px] uppercase tracking-wide text-amber-300">em breve</span>
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateInvoiceJob} className="mt-6 space-y-3">
+                <label className="block text-sm text-slate-300">Anexe a fatura (somente PDF)</label>
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  onChange={(e) => setInvoiceReaderFile(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-primary/15 file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary"
+                />
+                <button
+                  type="submit"
+                  disabled={!invoiceReaderFile || isSubmittingInvoiceJob}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-white disabled:opacity-50"
+                >
+                  {isSubmittingInvoiceJob ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                  Iniciar leitura em background
+                </button>
+              </form>
+            </div>
+
+            <div className="glass-card p-6">
+              <h3 className="font-heading text-xl text-white mb-4">Jobs em background</h3>
+              {invoiceReaderJobs.length === 0 ? (
+                <p className="text-slate-400">Nenhum job enviado ainda.</p>
+              ) : (
+                <div className="space-y-3">
+                  {invoiceReaderJobs.map((job) => (
+                    <div key={job.job_id} className="rounded-xl border border-white/10 p-4 bg-slate-950/40">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-white text-sm font-medium">{job.filename}</p>
+                        <span className={`text-xs px-2 py-1 rounded-full ${job.status === "completed" ? "bg-emerald-500/20 text-emerald-300" : job.status === "failed" ? "bg-secondary/20 text-secondary" : "bg-amber-500/20 text-amber-300"}`}>
+                          {job.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">Categoria: {job.category_name || "(aguardando detecção)"}</p>
+                      <p className="text-xs text-slate-400">Lançamentos: {job.parsed_count || 0} • Soma lida: {formatCurrency(job.parsed_total || 0)}</p>
+                      {typeof job.expected_total === "number" && (
+                        <p className="text-xs text-slate-400">Total da fatura detectado: {formatCurrency(job.expected_total)}</p>
+                      )}
+                      {job.errors?.length > 0 && (
+                        <p className="text-xs text-secondary mt-2">Erro: {job.errors[0]}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (
