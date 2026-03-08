@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { authFetch } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -25,7 +26,7 @@ export default function AdminQuotes() {
     if (mode) params.set("mode", mode);
     if (active) params.set("active", active);
 
-    const res = await fetch(`${API}/admin/quotes?${params.toString()}`, { credentials: "include" });
+    const res = await authFetch(`${API}/admin/quotes?${params.toString()}`, { credentials: "include" });
     if (!res.ok) throw new Error("Falha ao carregar frases");
     const data = await res.json();
     setItems(data.items || []);
@@ -49,7 +50,7 @@ export default function AdminQuotes() {
 
     const endpoint = editingId ? `${API}/admin/quotes/${editingId}` : `${API}/admin/quotes`;
     const method = editingId ? "PUT" : "POST";
-    const res = await fetch(endpoint, {
+    const res = await authFetch(endpoint, {
       method,
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -68,7 +69,7 @@ export default function AdminQuotes() {
 
   const onDeleteOne = async (id) => {
     if (!window.confirm("Confirma exclusão da frase?")) return;
-    const res = await fetch(`${API}/admin/quotes/${id}`, { method: "DELETE", credentials: "include" });
+    const res = await authFetch(`${API}/admin/quotes/${id}`, { method: "DELETE", credentials: "include" });
     if (!res.ok) return toast.error("Erro ao excluir");
     toast.success("Frase excluída");
     loadQuotes();
@@ -77,7 +78,7 @@ export default function AdminQuotes() {
   const bulkDelete = async () => {
     if (!selectedIds.length) return;
     if (!window.confirm(`Excluir ${selectedIds.length} frases? Esta ação é irreversível.`)) return;
-    const res = await fetch(`${API}/admin/quotes/bulk-delete`, {
+    const res = await authFetch(`${API}/admin/quotes/bulk-delete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -98,7 +99,7 @@ export default function AdminQuotes() {
       toast.error("JSON inválido");
       return;
     }
-    const res = await fetch(`${API}/admin/quotes/import`, {
+    const res = await authFetch(`${API}/admin/quotes/import`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",

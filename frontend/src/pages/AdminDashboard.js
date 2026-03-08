@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Users, Target, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
+import { authFetch } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -18,11 +19,11 @@ export default function AdminDashboard() {
 
   const loadAdminData = async () => {
     try {
-      const statsRes = await fetch(`${API}/admin/stats`, { credentials: 'include' });
+      const statsRes = await authFetch(`${API}/admin/stats`, { credentials: 'include' });
       const statsData = await statsRes.json();
       setStats(statsData);
 
-      const usersRes = await fetch(`${API}/admin/users`, { credentials: 'include' });
+      const usersRes = await authFetch(`${API}/admin/users`, { credentials: 'include' });
       const usersData = await usersRes.json();
       setUsers(usersData);
     } catch (error) {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { authFetch } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -13,7 +14,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+        const res = await authFetch(`${API}/auth/me`, { credentials: "include" });
         const user = await res.json();
         const enabled = Boolean(user?.settings?.kolbe_mode_enabled);
         setKolbeModeEnabled(enabled);
@@ -32,7 +33,7 @@ export default function SettingsPage() {
     setKolbeModeEnabled(nextValue);
 
     try {
-      const res = await fetch(`${API}/users/settings`, {
+      const res = await authFetch(`${API}/users/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

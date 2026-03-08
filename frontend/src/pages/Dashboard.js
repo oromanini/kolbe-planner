@@ -7,6 +7,7 @@ import ProgressStats from "../components/ProgressStats";
 import TutorialModal from "../components/TutorialModal";
 import NotificationBell from "../components/NotificationBell";
 import { toast } from "sonner";
+import { authFetch, clearAuthToken } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -109,18 +110,18 @@ export default function Dashboard() {
     try {
       setLoading(true);
 
-      const userRes = await fetch(`${API}/auth/me`, { credentials: 'include' });
+      const userRes = await authFetch(`${API}/auth/me`);
       const userData = await userRes.json();
       setUser(userData);
 
-      const quoteRes = await fetch(`${API}/quotes/daily`, { credentials: 'include' });
+      const quoteRes = await authFetch(`${API}/quotes/daily`);
       if (quoteRes.ok) {
         const quoteData = await quoteRes.json();
         setDailyQuote(quoteData.quote);
         setEffectiveMode(quoteData.mode || "neutral");
       }
 
-      const habitsRes = await fetch(`${API}/habits`, { credentials: 'include' });
+      const habitsRes = await authFetch(`${API}/habits`);
       const habitsData = await habitsRes.json();
 
       if (habitsData.length === 0 && !userData.onboarding_completed) {
@@ -129,9 +130,7 @@ export default function Dashboard() {
 
       setHabits(habitsData);
 
-      const completionsRes = await fetch(`${API}/completions?year=${currentYear}&month=${currentMonth}`, {
-        credentials: 'include',
-      });
+      const completionsRes = await authFetch(`${API}/completions?year=${currentYear}&month=${currentMonth}`);
       const completionsData = await completionsRes.json();
       setCompletions(completionsData);
     } catch (error) {
@@ -184,7 +183,7 @@ export default function Dashboard() {
     });
 
     try {
-      const res = await fetch(`${API}/completions/toggle`, {
+      const res = await authFetch(`${API}/completions/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -252,10 +251,10 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API}/auth/logout`, {
+      await authFetch(`${API}/auth/logout`, {
         method: 'POST',
-        credentials: 'include',
       });
+      clearAuthToken();
       navigate('/');
     } catch (error) {
       console.error('Logout error:', error);
@@ -263,9 +262,8 @@ export default function Dashboard() {
   };
 
   const handleCompleteOnboarding = async () => {
-    await fetch(`${API}/auth/complete-onboarding`, {
+    await authFetch(`${API}/auth/complete-onboarding`, {
       method: 'POST',
-      credentials: 'include',
     });
     setShowTutorial(false);
     loadData();

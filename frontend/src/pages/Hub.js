@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Target, DollarSign, LogOut } from "lucide-react";
+import { authFetch, clearAuthToken } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -9,7 +10,8 @@ export default function Hub() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'include' });
+      await authFetch(`${API}/auth/logout`, { method: 'POST' });
+      clearAuthToken();
       navigate('/');
     } catch (error) {
       console.error('Logout error:', error);
