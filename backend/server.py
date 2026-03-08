@@ -487,7 +487,7 @@ async def register(request: RegisterRequest, response: Response):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
 
-    return User(**user_doc)
+    return {**User(**user_doc).model_dump(), "session_token": session_token}
 
 
 @api_router.post("/auth/login")
@@ -530,7 +530,7 @@ async def login(request: LoginRequest, response: Response):
         user_doc['created_at'] = datetime.fromisoformat(user_doc['created_at'])
     user_doc['settings'] = normalize_user_settings(user_doc.get('settings'))
 
-    return User(**user_doc)
+    return {**User(**user_doc).model_dump(), "session_token": session_token}
 
 
 @api_router.get("/auth/me")

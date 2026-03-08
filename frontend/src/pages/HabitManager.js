@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil } from "lucide-react";
 import { toast } from "sonner";
+import { authFetch } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -55,7 +56,7 @@ export default function HabitManager() {
 
   const loadHabits = async () => {
     try {
-      const res = await fetch(`${API}/habits`, { credentials: 'include' });
+      const res = await authFetch(`${API}/habits`, { credentials: 'include' });
       const data = await res.json();
       setHabits(data);
     } catch (error) {
@@ -107,7 +108,7 @@ export default function HabitManager() {
 
     try {
       setIsCreatingHabit(true);
-      const res = await fetch(`${API}/habits`, {
+      const res = await authFetch(`${API}/habits`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -156,7 +157,7 @@ export default function HabitManager() {
 
     try {
       setIsCreatingHabit(true);
-      const res = await fetch(`${API}/habits/${editingHabitId}`, {
+      const res = await authFetch(`${API}/habits/${editingHabitId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -191,7 +192,7 @@ export default function HabitManager() {
     }
 
     try {
-      const res = await fetch(`${API}/habits/${habitId}`, {
+      const res = await authFetch(`${API}/habits/${habitId}`, {
         method: 'DELETE',
         credentials: 'include',
       });

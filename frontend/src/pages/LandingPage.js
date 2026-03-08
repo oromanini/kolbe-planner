@@ -3,6 +3,7 @@ import { ArrowRight, Check, TrendingUp, Target, Zap, Calendar, Mail, Lock, User 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { authFetch, setAuthToken } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -32,10 +33,9 @@ export default function LandingPage() {
     setLoading(true);
     try {
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const res = await fetch(`${API}${endpoint}`, {
+      const res = await authFetch(`${API}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify(formData)
       });
       
@@ -44,6 +44,11 @@ export default function LandingPage() {
         throw new Error(error.detail || 'Erro na autenticação');
       }
       
+      const payload = await res.json();
+      if (payload?.session_token) {
+        setAuthToken(payload.session_token);
+      }
+
       toast.success(isLogin ? 'Login realizado!' : 'Conta criada!');
       navigate('/hub');
     } catch (error) {

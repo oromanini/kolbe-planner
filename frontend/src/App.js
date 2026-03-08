@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage";
 import AdminQuotes from "./pages/AdminQuotes";
 import { Toaster } from "./components/ui/sonner";
 import PlannerTipsAssistant from "./components/PlannerTipsAssistant";
+import { authFetch } from "./lib/api";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -30,9 +31,7 @@ function ProtectedRoute({ children }) {
 
     const checkAuth = async () => {
       try {
-        const response = await fetch(`${API}/auth/me`, {
-          credentials: 'include'
-        });
+        const response = await authFetch(`${API}/auth/me`);
         
         if (!response.ok) throw new Error('Not authenticated');
         
@@ -126,10 +125,13 @@ function AppRouter() {
 }
 
 function AppShell() {
+  const location = useLocation();
+  const isPublicRoute = location.pathname === "/";
+
   return (
     <>
       <AppRouter />
-      <PlannerTipsAssistant />
+      {!isPublicRoute && <PlannerTipsAssistant />}
       <Toaster />
     </>
   );

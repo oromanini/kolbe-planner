@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, Check, Sparkles, Zap } from "lucide-react";
 import { Dialog, DialogContent } from "./ui/dialog";
+import { authFetch } from "../lib/api";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -16,7 +17,7 @@ export default function TutorialModal({ onComplete, onClose, kolbeMode = false }
 
   const handleInitializeDefaults = async () => {
     try {
-      await fetch(`${API}/habits/initialize-defaults`, {
+      await authFetch(`${API}/habits/initialize-defaults`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
