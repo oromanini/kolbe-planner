@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Response, Header, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Cookie, Response, Header, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import re
+import asyncio
 import smtplib
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
@@ -864,6 +865,28 @@ class Savings(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
+class InvoiceReaderJob(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    job_id: str
+    user_id: str
+    status: Literal["queued", "processing", "completed", "failed"] = "queued"
+    source_type: Literal["credit_card_pdf"] = "credit_card_pdf"
+    filename: str
+    requested_month: str
+    bank_name: Optional[str] = None
+    card_suffix: Optional[str] = None
+    category_name: Optional[str] = None
+    expected_total: Optional[float] = None
+    parsed_total: Optional[float] = None
+    parsed_count: int = 0
+    created_expense_ids: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
 # Input models
 class ExpenseCreate(BaseModel):
     name: str
@@ -999,6 +1022,213 @@ async def resolve_user_category_name(user_id: str, raw_category: str, expected_t
         return by_exact_name["name"]
 
     return None
+
+
+
+class InvoiceImportRequest(BaseModel):
+    requested_month: str
+
+
+def detect_bank_name(raw_text: str) -> str:
+    text = (raw_text or "").lower()
+    if "nubank" in text or " nu " in text:
+        return "Nubank"
+    if "itaú" in text or "itau" in text:
+        return "Itau"
+    if "neon" in text:
+        return "Neon"
+    return "Cartão"
+
+
+def detect_card_suffix(raw_text: str) -> str:
+    text = raw_text or ""
+    patterns = [
+        r"final\s*(\d{4})",
+        r"\*{2,}\s*(\d{4})",
+        r"\.{2,}\s*(\d{4})",
+        r"cart[aã]o\s*(\d{4})",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return "XXXX"
+
+
+def parse_brl_number(raw_value: str) -> Optional[float]:
+    candidate = (raw_value or "").strip()
+    if not candidate:
+        return None
+    normalized = re.sub(r"[^0-9,.-]", "", candidate)
+    if not normalized:
+        return None
+    normalized = normalized.replace(".", "").replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def extract_expected_total(raw_text: str) -> Optional[float]:
+    patterns = [
+        r"total\s+da\s+fatura[^0-9]{0,20}([0-9\.,]+)",
+        r"valor\s+total[^0-9]{0,20}([0-9\.,]+)",
+        r"fatura[^0-9]{0,20}([0-9\.,]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, raw_text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        amount = parse_brl_number(match.group(1))
+        if amount is not None and amount > 0:
+            return amount
+    return None
+
+
+def extract_invoice_items(raw_text: str) -> List[dict]:
+    items = []
+    seen = set()
+    lines = [line.strip() for line in (raw_text or "").splitlines() if line and line.strip()]
+    patterns = [
+        re.compile(r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+R\$\s*([0-9\.,]+)$", re.IGNORECASE),
+        re.compile(r"^\d{2}/\d{2}\s+(.+?)\s+([0-9\.,]+)$", re.IGNORECASE),
+        re.compile(r"^(.+?)\s+-\s+([0-9]+/[0-9]+)\s*-\s+([0-9\.,]+)$", re.IGNORECASE),
+    ]
+
+    for line in lines:
+        lowered = line.lower()
+        if any(flag in lowered for flag in ["pagamento", "estorno", "anuidade", "juros", "iof", "encargos"]):
+            continue
+        for pattern in patterns:
+            match = pattern.match(line)
+            if not match:
+                continue
+            if pattern.pattern.startswith('^\d{2}\s+'):
+                description = match.group(1).strip()
+                amount_raw = match.group(2)
+            elif pattern.pattern.startswith('^\d{2}/'):
+                description = match.group(1).strip()
+                amount_raw = match.group(2)
+            else:
+                description = f"{match.group(1).strip()} - {match.group(2).strip()}"
+                amount_raw = match.group(3)
+            amount = parse_brl_number(amount_raw)
+            if amount is None or amount <= 0:
+                continue
+            key = (description.casefold(), round(amount, 2))
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append({"name": description, "amount": round(amount, 2)})
+            break
+
+    return items
+
+
+def extract_pdf_text(pdf_bytes: bytes) -> str:
+    # Fallback lightweight extraction for text-based PDFs.
+    decoded = (pdf_bytes or b"").decode("latin-1", errors="ignore")
+    decoded = decoded.replace("\r", "\n")
+    decoded = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", decoded)
+    return decoded
+
+
+async def ensure_expense_category(user_id: str, category_name: str) -> str:
+    normalized_name = normalize_category_name(category_name)
+    normalized_key = normalize_category_key(normalized_name)
+    existing = await db.financial_categories.find_one(
+        {"user_id": user_id, "type": "expense", "name_key": normalized_key},
+        {"_id": 0},
+    )
+    if existing:
+        return existing["name"]
+
+    category_doc = {
+        "category_id": f"cat_{uuid.uuid4().hex[:12]}",
+        "user_id": user_id,
+        "name": normalized_name,
+        "name_key": normalized_key,
+        "type": "expense",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.financial_categories.insert_one(category_doc)
+    return category_doc["name"]
+
+
+async def _set_invoice_job(job_id: str, patch: dict):
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.invoice_reader_jobs.update_one({"job_id": job_id}, {"$set": patch})
+
+
+async def process_invoice_reader_job(job_id: str, user_id: str, requested_month: str, filename: str, pdf_bytes: bytes):
+    await _set_invoice_job(job_id, {"status": "processing", "started_at": datetime.now(timezone.utc).isoformat()})
+    errors = []
+    created_ids = []
+    try:
+        raw_text = await asyncio.to_thread(extract_pdf_text, pdf_bytes)
+        bank = detect_bank_name(raw_text)
+        suffix = detect_card_suffix(raw_text)
+        category_name = await ensure_expense_category(user_id, f"{bank} final {suffix}")
+
+        await _set_invoice_job(job_id, {"bank_name": bank, "card_suffix": suffix, "category_name": category_name})
+
+        methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+        method = next((m for m in methods if normalize_method_name(m.get("name", "")) == "crédito a vista"), None)
+        if not method:
+            await ensure_default_financial_methods(user_id)
+            methods = await db.financial_methods.find({"user_id": user_id}, {"_id": 0}).to_list(100)
+            method = next((m for m in methods if normalize_method_name(m.get("name", "")) == "crédito a vista"), None)
+        if not method:
+            raise ValueError("Método padrão de cartão não encontrado")
+
+        items = extract_invoice_items(raw_text)
+        parsed_total = round(sum(item["amount"] for item in items), 2)
+        expected_total = extract_expected_total(raw_text)
+
+        await _set_invoice_job(job_id, {
+            "parsed_count": len(items),
+            "parsed_total": parsed_total,
+            "expected_total": expected_total,
+        })
+
+        if not items:
+            raise ValueError("Nenhum lançamento de compra foi identificado no PDF")
+
+        if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
+            raise ValueError(
+                f"Soma dos lançamentos ({parsed_total:.2f}) diferente do total da fatura ({expected_total:.2f})"
+            )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for item in items:
+            expense_doc = {
+                "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
+                "user_id": user_id,
+                "name": item["name"],
+                "amount": item["amount"],
+                "method_id": method["method_id"],
+                "category": category_name,
+                "subcategory": "fatura-cartao",
+                "month": requested_month,
+                "created_at": now_iso,
+            }
+            await db.expenses.insert_one(expense_doc)
+            created_ids.append(expense_doc["expense_id"])
+
+        await _set_invoice_job(job_id, {
+            "status": "completed",
+            "created_expense_ids": created_ids,
+            "errors": [],
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        errors.append(str(exc))
+        await _set_invoice_job(job_id, {
+            "status": "failed",
+            "errors": errors,
+            "created_expense_ids": created_ids,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        })
 
 
 # ============ FINANCIAL ENDPOINTS ============
@@ -1414,7 +1644,67 @@ async def get_summary(
         "category_breakdown": category_breakdown
     }
 
-    
+
+@api_router.post("/finance/invoice-reader/jobs", status_code=202)
+async def create_invoice_reader_job(
+    requested_month: str = Form(...),
+    file: UploadFile = File(...),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+
+    if not re.match(r"^\d{4}-\d{2}$", requested_month or ""):
+        raise HTTPException(status_code=400, detail="Mês inválido. Use YYYY-MM")
+
+    if (file.content_type or "").lower() not in {"application/pdf", "application/x-pdf"} and not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Arquivo PDF vazio")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    job = {
+        "job_id": f"invjob_{uuid.uuid4().hex[:12]}",
+        "user_id": user.user_id,
+        "status": "queued",
+        "source_type": "credit_card_pdf",
+        "filename": file.filename or "fatura.pdf",
+        "requested_month": requested_month,
+        "bank_name": None,
+        "card_suffix": None,
+        "category_name": None,
+        "expected_total": None,
+        "parsed_total": None,
+        "parsed_count": 0,
+        "created_expense_ids": [],
+        "errors": [],
+        "started_at": None,
+        "finished_at": None,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.invoice_reader_jobs.insert_one(job)
+    asyncio.create_task(process_invoice_reader_job(job["job_id"], user.user_id, requested_month, job["filename"], pdf_bytes))
+    return sanitize_mongo_document(job)
+
+
+@api_router.get("/finance/invoice-reader/jobs")
+async def get_invoice_reader_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None)
+):
+    user = await get_current_user(session_token, authorization)
+    jobs = await db.invoice_reader_jobs.find(
+        {"user_id": user.user_id},
+        {"_id": 0}
+    ).to_list(limit)
+    jobs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return jobs[:limit]
+
+
     habits = []
     for i, h in enumerate(default_habits):
         habit = {
@@ -1911,6 +2201,8 @@ async def create_database_indexes():
     await db.financial_categories.create_index([("user_id", 1), ("type", 1), ("name_key", 1)], unique=True)
     await db.incomes.create_index([("user_id", 1), ("month", 1)])
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
+    await db.invoice_reader_jobs.create_index([("user_id", 1), ("created_at", -1)])
+    await db.invoice_reader_jobs.create_index([("job_id", 1)], unique=True)
     await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
     await db.notifications.create_index([("user_id", 1), ("dedupe_key", 1)], unique=True)
 

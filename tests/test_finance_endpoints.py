@@ -114,6 +114,7 @@ class FakeDB:
         self.expenses = FakeCollection()
         self.incomes = FakeCollection()
         self.savings = FakeCollection()
+        self.invoice_reader_jobs = FakeCollection()
 
     async def command(self, name):
         if name != "ping":
@@ -311,3 +312,40 @@ def test_health_check_reports_ok(fake_backend):
     assert result["status"] == "ok"
     assert result["checks"]["mongo"] == "ok"
     assert result["checks"]["collections"] == "ok"
+
+
+
+def test_invoice_reader_extractors_parse_examples():
+    nubank_line = "12 FEV iFood - NuPay R$ 61,89"
+    itau_line = "04/07 AZUL LINHAS IP 8/12 530,33"
+    raw = f"""NUBANK
+Cartão final 7071
+Total da fatura R$ 591,89
+{nubank_line}
+{itau_line}
+"""
+
+    items = server.extract_invoice_items(raw)
+    assert any(item["name"] == "iFood - NuPay" and item["amount"] == 61.89 for item in items)
+    assert any("AZUL LINHAS IP 8/12" in item["name"] and item["amount"] == 530.33 for item in items)
+    assert server.extract_expected_total(raw) == 591.89
+    assert server.detect_bank_name(raw) == "Nubank"
+    assert server.detect_card_suffix(raw) == "7071"
+
+
+def test_invoice_reader_job_list(fake_backend):
+    fake_backend.invoice_reader_jobs.docs.append({
+        "job_id": "invjob_1",
+        "user_id": "user_1",
+        "status": "queued",
+        "created_at": "2026-03-01T10:00:00+00:00",
+    })
+    fake_backend.invoice_reader_jobs.docs.append({
+        "job_id": "invjob_2",
+        "user_id": "user_1",
+        "status": "completed",
+        "created_at": "2026-03-02T10:00:00+00:00",
+    })
+
+    jobs = run(server.get_invoice_reader_jobs(limit=10))
+    assert [job["job_id"] for job in jobs] == ["invjob_2", "invjob_1"]
