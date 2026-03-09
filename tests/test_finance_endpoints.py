@@ -519,6 +519,21 @@ def test_invoice_reader_extracts_nubank_items_from_compact_single_line_text():
     ]
 
 
+def test_extract_non_purchase_invoice_items_from_compact_text():
+    raw = (
+        "NEON 24 FEV UBER * PENDING 12,48 "
+        "28 FEV IOF - HOSTINGER.COM 0,27 "
+        "09 FEV Pagamento Fatura 116,59"
+    )
+
+    items = server.extract_non_purchase_invoice_items(raw)
+
+    assert items == [
+        {"name": "IOF - HOSTINGER.COM", "amount": 0.27},
+        {"name": "Pagamento Fatura", "amount": 116.59},
+    ]
+
+
 def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
     now = datetime.now(timezone.utc)
     fake_backend.invoice_reader_jobs.docs.append(
@@ -677,6 +692,50 @@ def test_invoice_reader_prefers_pdf_ai_as_primary_parser(fake_backend, monkeypat
     assert regex_calls["count"] == 0
     assert len(fake_backend.expenses.docs) == 1
     assert fake_backend.expenses.docs[0]["name"] == "PDF AI ITEM"
+
+
+def test_invoice_reader_accepts_gap_equal_to_non_purchase_total(
+    fake_backend, monkeypatch
+):
+    fake_backend.financial_methods.docs.append(
+        {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
+    )
+    fake_backend.invoice_reader_jobs.docs.append(
+        {"job_id": "job_gap", "user_id": "user_1", "status": "queued"}
+    )
+
+    raw_text = (
+        "24 FEV UBER * PENDING 12,48\n"
+        "28 FEV HOSTINGER.COM 7,59\n"
+        "28 FEV IOF - HOSTINGER.COM 0,27\n"
+    )
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: raw_text)
+    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 20.34)
+    monkeypatch.setattr(
+        server,
+        "extract_invoice_items_from_pdf_with_ai",
+        lambda *_args, **_kwargs: [
+            {"name": "UBER * PENDING", "amount": 12.48},
+            {"name": "HOSTINGER.COM", "amount": 7.59},
+        ],
+    )
+
+    run(
+        server.process_invoice_reader_job(
+            "job_gap", "user_1", "2026-03", "fat.pdf", b"pdf"
+        )
+    )
+
+    assert len(fake_backend.expenses.docs) == 2
+    job = next(
+        doc
+        for doc in fake_backend.invoice_reader_jobs.docs
+        if doc.get("job_id") == "job_gap"
+    )
+    assert job["status"] == "completed"
+    assert job["non_purchase_total"] == 0.27
+    assert job["non_purchase_count"] == 1
 
 
 def test_invoice_reader_fails_when_ai_total_does_not_match(fake_backend, monkeypatch):

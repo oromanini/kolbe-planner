@@ -1545,8 +1545,8 @@ def select_items_matching_expected_total(
     return [item for idx, item in enumerate(items) if idx in selected_indices]
 
 
-def extract_invoice_items(raw_text: str) -> List[dict]:
-    items = []
+def _parse_invoice_entries(raw_text: str, *, keep_purchase_entries: bool) -> List[dict]:
+    entries = []
     seen = set()
     lines = [
         line.strip() for line in (raw_text or "").splitlines() if line and line.strip()
@@ -1561,17 +1561,14 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
     ]
 
     for line in lines:
-        lowered = line.lower()
-        if not is_invoice_purchase_name(lowered):
-            continue
         for pattern in patterns:
             match = pattern.match(line)
             if not match:
                 continue
-            if pattern.pattern.startswith("^\d{2}\s+"):
+            if pattern.pattern.startswith(r"^\d{2}\s+"):
                 description = clean_invoice_item_name(match.group(1).strip())
                 amount_raw = match.group(2)
-            elif pattern.pattern.startswith("^\d{2}/"):
+            elif pattern.pattern.startswith(r"^\d{2}/"):
                 description = clean_invoice_item_name(match.group(1).strip())
                 amount_raw = match.group(2)
             else:
@@ -1579,6 +1576,9 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
                     f"{match.group(1).strip()} - {match.group(2).strip()}"
                 )
                 amount_raw = match.group(3)
+            is_purchase = is_invoice_purchase_name(description)
+            if keep_purchase_entries != is_purchase:
+                continue
             amount = parse_brl_number(amount_raw)
             if amount is None or amount <= 0:
                 continue
@@ -1586,11 +1586,9 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
             if key in seen:
                 continue
             seen.add(key)
-            items.append({"name": description, "amount": round(amount, 2)})
+            entries.append({"name": description, "amount": round(amount, 2)})
             break
 
-    # Some PDF extractors flatten Nubank-like sections into a single paragraph,
-    # so we also scan across the whole text using date/month boundaries.
     compact_pattern = re.compile(
         r"(\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3})\s+(.+?)\s+(?:R\$\s*)?([0-9\.,]+)(?=\s+\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+|$)",
         re.IGNORECASE,
@@ -1598,7 +1596,8 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
     compact_text = re.sub(r"\s+", " ", raw_text or "").strip()
     for match in compact_pattern.finditer(compact_text):
         description = clean_invoice_item_name(match.group(2).strip())
-        if not is_invoice_purchase_name(description):
+        is_purchase = is_invoice_purchase_name(description)
+        if keep_purchase_entries != is_purchase:
             continue
         amount = parse_brl_number(match.group(3))
         if amount is None or amount <= 0:
@@ -1607,9 +1606,17 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
         if key in seen:
             continue
         seen.add(key)
-        items.append({"name": description, "amount": round(amount, 2)})
+        entries.append({"name": description, "amount": round(amount, 2)})
 
-    return items
+    return entries
+
+
+def extract_invoice_items(raw_text: str) -> List[dict]:
+    return _parse_invoice_entries(raw_text, keep_purchase_entries=True)
+
+
+def extract_non_purchase_invoice_items(raw_text: str) -> List[dict]:
+    return _parse_invoice_entries(raw_text, keep_purchase_entries=False)
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -1737,9 +1744,27 @@ async def process_invoice_reader_job(
             )
 
         if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
-            raise ValueError(
-                f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
+            non_purchase_items = extract_non_purchase_invoice_items(raw_text)
+            non_purchase_total = round(
+                sum(item["amount"] for item in non_purchase_items), 2
             )
+            gap = round(expected_total - parsed_total, 2)
+            if (
+                gap > 0
+                and non_purchase_total > 0
+                and abs(non_purchase_total - gap) <= 0.01
+            ):
+                await _set_invoice_job(
+                    job_id,
+                    {
+                        "non_purchase_count": len(non_purchase_items),
+                        "non_purchase_total": non_purchase_total,
+                    },
+                )
+            else:
+                raise ValueError(
+                    f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
+                )
 
         now_iso = datetime.now(timezone.utc).isoformat()
         for item in items:
