@@ -490,6 +490,18 @@ def test_select_items_matching_expected_total_finds_subset_when_ai_overextracts(
     assert len(selected) == 5
 
 
+def test_invoice_reader_filters_non_purchase_lines_from_regex_parser():
+    raw = """
+11 FEV SALDO RESTANTE DA FATURA ANTERIOR R$ 0,00
+11 FEV SHPP BRASIL INSTITUICAO DE PAG R$ 69,73
+11 FEV COMPOSIÇÃO DO PAGAMENTO MÍNIMO R$ 349,09
+"""
+
+    items = server.extract_invoice_items(raw)
+
+    assert items == [{"name": "SHPP BRASIL INSTITUICAO DE PAG", "amount": 69.73}]
+
+
 def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
     now = datetime.now(timezone.utc)
     fake_backend.invoice_reader_jobs.docs.append(
@@ -552,6 +564,31 @@ def test_invoice_reader_ai_extractor_uses_openai_response(monkeypatch):
     assert len(items) == 2
     assert items[0]["name"] == "AZUL LINHAS IP 8/12"
     assert items[0]["amount"] == 530.33
+
+
+def test_invoice_reader_ai_extractor_discards_rotativo_and_payment_entries(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "output_text": '{"items":[{"name":"Pagamento em 07 FEV","amount":1425.80},{"name":"AUTO POSTO AMIGAO","amount":349.09},{"name":"Valor da parcela","amount":157.74}]}'
+            }
+
+    class FakeRequests:
+        @staticmethod
+        def post(*_args, **_kwargs):
+            return FakeResponse()
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "requests", FakeRequests)
+
+    items = server.extract_invoice_items_with_ai("fatura exemplo")
+    assert items == [{"name": "AUTO POSTO AMIGAO", "amount": 349.09}]
 
 
 def test_invoice_reader_pdf_ai_extractor_sends_pdf_file(monkeypatch):

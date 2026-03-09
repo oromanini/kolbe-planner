@@ -1225,6 +1225,43 @@ def parse_brl_number(raw_value: str) -> Optional[float]:
         return None
 
 
+INVOICE_NON_PURCHASE_FLAGS = [
+    "pagamento",
+    "estorno",
+    "anuidade",
+    "juros",
+    "iof",
+    "encargos",
+    "seguro",
+    "limite",
+    "saldo restante",
+    "fatura anterior",
+    "pagamento mínimo",
+    "composição do pagamento mínimo",
+    "parcelamentos",
+    "juros rotativo",
+    "total a pagar",
+    "valor da entrada",
+    "valor da parcela",
+    "juros totais",
+    "cet",
+]
+
+
+def clean_invoice_item_name(name: str) -> str:
+    cleaned = (name or "").replace("→", " ").replace("•", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -\n\t")
+    return cleaned
+
+
+def is_invoice_purchase_name(name: str) -> bool:
+    cleaned = clean_invoice_item_name(name)
+    lowered = cleaned.casefold()
+    if not cleaned:
+        return False
+    return not any(flag in lowered for flag in INVOICE_NON_PURCHASE_FLAGS)
+
+
 def extract_invoice_items_with_ai(
     raw_text: str, expected_total: Optional[float] = None
 ) -> List[dict]:
@@ -1243,6 +1280,7 @@ def extract_invoice_items_with_ai(
     prompt = (
         "Extraia apenas lançamentos de compra de uma fatura de cartão. "
         "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
+        "Ignore também seções de parcelamento/rotativo como: saldo restante, CET, valor da entrada, valor da parcela, total a pagar e composição de pagamento mínimo. "
         "Considere layouts de bancos brasileiros variados (Itau, Nubank, Bradesco, Santander e outros). "
         "Responda somente JSON válido no formato: "
         '{"items":[{"name":"texto","amount":123.45}]}. '
@@ -1321,6 +1359,8 @@ def extract_invoice_items_from_pdf_with_ai(
     prompt = (
         "Extraia apenas lançamentos de compra da fatura anexada. "
         "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
+        "Ignore também seções de parcelamento/rotativo como: saldo restante, CET, valor da entrada, valor da parcela, total a pagar e composição de pagamento mínimo. "
+        "Em faturas do Nubank, foque na seção TRANSAÇÕES e descarte as seções de Pagamentos e Financiamentos. "
         "Responda somente JSON válido no formato: "
         '{"items":[{"name":"texto","amount":123.45}]}. '
         "Use amount com ponto decimal e valor positivo.\n"
@@ -1424,14 +1464,14 @@ def run_invoice_ai_payload(payload: dict, api_key: str) -> List[dict]:
     cleaned = []
     seen = set()
     for entry in parsed.get("items", []):
-        name = str(entry.get("name", "")).strip()
+        name = clean_invoice_item_name(str(entry.get("name", "")))
         amount_raw = entry.get("amount")
         amount = (
             float(amount_raw)
             if isinstance(amount_raw, (int, float))
             else parse_brl_number(str(amount_raw))
         )
-        if not name or amount is None or amount <= 0:
+        if not name or amount is None or amount <= 0 or not is_invoice_purchase_name(name):
             continue
         key = (name.casefold(), round(amount, 2))
         if key in seen:
@@ -1521,23 +1561,22 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
 
     for line in lines:
         lowered = line.lower()
-        if any(
-            flag in lowered
-            for flag in ["pagamento", "estorno", "anuidade", "juros", "iof", "encargos"]
-        ):
+        if not is_invoice_purchase_name(lowered):
             continue
         for pattern in patterns:
             match = pattern.match(line)
             if not match:
                 continue
             if pattern.pattern.startswith("^\d{2}\s+"):
-                description = match.group(1).strip()
+                description = clean_invoice_item_name(match.group(1).strip())
                 amount_raw = match.group(2)
             elif pattern.pattern.startswith("^\d{2}/"):
-                description = match.group(1).strip()
+                description = clean_invoice_item_name(match.group(1).strip())
                 amount_raw = match.group(2)
             else:
-                description = f"{match.group(1).strip()} - {match.group(2).strip()}"
+                description = clean_invoice_item_name(
+                    f"{match.group(1).strip()} - {match.group(2).strip()}"
+                )
                 amount_raw = match.group(3)
             amount = parse_brl_number(amount_raw)
             if amount is None or amount <= 0:
