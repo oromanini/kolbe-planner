@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Plus,
+  Eye,
   TrendingUp,
   TrendingDown,
   DollarSign,
@@ -91,6 +92,7 @@ export default function FinancialPlanner() {
   const [invoiceReaderJobs, setInvoiceReaderJobs] = useState([]);
   const [invoiceReaderFile, setInvoiceReaderFile] = useState(null);
   const [isSubmittingInvoiceJob, setIsSubmittingInvoiceJob] = useState(false);
+  const [selectedCategoryName, setSelectedCategoryName] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -536,6 +538,10 @@ export default function FinancialPlanner() {
       average: item.quantity > 0 ? item.total / item.quantity : 0,
     }))
     .sort((a, b) => b.total - a.total);
+
+  const selectedCategoryExpenses = selectedCategoryName
+    ? expenses.filter((expense) => (expense.category || "Sem categoria") === selectedCategoryName)
+    : [];
 
   const expenseCategories = categories.filter((category) => (category.type || "expense") === "expense");
   const incomeCategories = categories.filter((category) => (category.type || "expense") === "income");
@@ -1234,6 +1240,7 @@ export default function FinancialPlanner() {
                       <th className="px-4 py-3 font-medium">Qtd. lançamentos</th>
                       <th className="px-4 py-3 font-medium">Ticket médio</th>
                       <th className="px-4 py-3 font-medium">Total</th>
+                      <th className="px-4 py-3 font-medium text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1243,6 +1250,16 @@ export default function FinancialPlanner() {
                         <td className="px-4 py-3 text-slate-300">{item.quantity}</td>
                         <td className="px-4 py-3 text-slate-300">{formatCurrency(item.average)}</td>
                         <td className="px-4 py-3 text-secondary font-medium">{formatCurrency(item.total)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCategoryName(item.category)}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/20 text-slate-200 hover:bg-white/10 transition-colors"
+                          >
+                            <Eye className="w-4 h-4" />
+                            Visualizar
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1288,6 +1305,47 @@ export default function FinancialPlanner() {
               <button onClick={confirmDeleteCategory} className="px-5 py-2 rounded-full bg-secondary text-white">
                 Excluir categoria
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedCategoryName && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="glass-card w-full max-w-3xl p-6 max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-xl font-heading text-white">Gastos da categoria: {selectedCategoryName}</h3>
+                <p className="text-sm text-slate-300 mt-1">{selectedCategoryExpenses.length} lançamento(s) no mês selecionado.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedCategoryName(null)}
+                className="px-4 py-2 border border-white/20 rounded-full text-slate-200"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="overflow-auto rounded-xl border border-white/10">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-white/5 text-slate-300 sticky top-0">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Nome</th>
+                    <th className="px-4 py-3 font-medium">Método</th>
+                    <th className="px-4 py-3 font-medium text-right">Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedCategoryExpenses.map((expense) => (
+                    <tr key={expense.expense_id} className="border-t border-white/10">
+                      <td className="px-4 py-3 text-slate-200">{expense.name}</td>
+                      <td className="px-4 py-3 text-slate-300">{expense.method_name || "-"}</td>
+                      <td className="px-4 py-3 text-right text-slate-100 font-medium">{formatCurrency(expense.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
