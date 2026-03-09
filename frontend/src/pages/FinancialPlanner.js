@@ -687,7 +687,7 @@ export default function FinancialPlanner() {
               activeFinanceTab === "leitor" ? "bg-primary text-white" : "text-slate-300 hover:text-white hover:bg-white/10"
             }`}
           >
-            Leitor de contas
+            Leitor de contas <span className="text-[10px] uppercase tracking-wide text-amber-300 align-middle">beta</span>
           </button>
         </div>
 
@@ -1164,6 +1164,9 @@ export default function FinancialPlanner() {
           <div className="space-y-6">
             <div className="glass-card p-6">
               <h2 className="font-heading text-2xl font-medium text-white mb-2">Leitor de contas</h2>
+              <p className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-200 mb-4">
+                Beta: a IA pode errar a leitura. Sempre revise os lançamentos antes de confirmar.
+              </p>
               <p className="text-slate-300 mb-6">O que deseja fazer?</p>
               <div className="flex flex-wrap gap-3">
                 <button className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white">
