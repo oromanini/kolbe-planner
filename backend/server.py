@@ -1443,9 +1443,12 @@ def run_invoice_ai_payload(payload: dict, api_key: str) -> List[dict]:
 
 def extract_expected_total(raw_text: str) -> Optional[float]:
     patterns = [
-        r"total\s+da\s+fatura[^0-9]{0,20}([0-9\.,]+)",
-        r"valor\s+total[^0-9]{0,20}([0-9\.,]+)",
-        r"fatura[^0-9]{0,20}([0-9\.,]+)",
+        r"total\s+da\s+sua\s+fatura[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
+        r"total\s+da\s+fatura[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
+        r"lan[çc]amentos\s+no\s+cart[aã]o[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
+        r"total\s+dos\s+lan[çc]amentos\s+atuais[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
+        r"valor\s+do\s+documento[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
+        r"valor\s+total(?!\s+financiado)[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
     ]
     for pattern in patterns:
         match = re.search(pattern, raw_text, flags=re.IGNORECASE)
@@ -1455,6 +1458,51 @@ def extract_expected_total(raw_text: str) -> Optional[float]:
         if amount is not None and amount > 0:
             return amount
     return None
+
+
+def select_items_matching_expected_total(
+    items: List[dict], expected_total: Optional[float]
+) -> Optional[List[dict]]:
+    if expected_total is None or not items:
+        return None
+
+    target_cents = int(round(expected_total * 100))
+    item_cents = [int(round(max(item.get("amount", 0), 0) * 100)) for item in items]
+    parsed_cents = sum(item_cents)
+    if parsed_cents == target_cents:
+        return items
+    if target_cents <= 0 or parsed_cents < target_cents:
+        return None
+
+    # Subset-sum in cents to recover when AI mixes "lançamentos atuais" with
+    # "próximas faturas" sections.
+    reachable = {0: None}
+    for idx, cents in enumerate(item_cents):
+        if cents <= 0:
+            continue
+        for total in sorted(reachable.keys(), reverse=True):
+            new_total = total + cents
+            if new_total > target_cents or new_total in reachable:
+                continue
+            reachable[new_total] = (total, idx)
+        if target_cents in reachable:
+            break
+
+    if target_cents not in reachable:
+        return None
+
+    selected_indices = set()
+    cursor = target_cents
+    while cursor:
+        previous = reachable.get(cursor)
+        if previous is None:
+            return None
+        cursor, idx = previous
+        selected_indices.add(idx)
+
+    if len(selected_indices) == len(items):
+        return items
+    return [item for idx, item in enumerate(items) if idx in selected_indices]
 
 
 def extract_invoice_items(raw_text: str) -> List[dict]:
@@ -1609,6 +1657,9 @@ async def process_invoice_reader_job(
             )
         if not items:
             items = await asyncio.to_thread(extract_invoice_items, raw_text)
+        matched_items = select_items_matching_expected_total(items, expected_total)
+        if matched_items:
+            items = matched_items
         parsed_total = round(sum(item["amount"] for item in items), 2)
 
         await _set_invoice_job(

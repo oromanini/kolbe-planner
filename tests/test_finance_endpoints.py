@@ -462,6 +462,34 @@ Total da fatura R$ 591,89
     assert server.detect_card_suffix(raw) == "7071"
 
 
+def test_extract_expected_total_prefers_invoice_total_over_payment_and_financed_total():
+    raw = """
+O total da sua fatura é:
+R$ 876,81
+Pagamento via conta -1.312,97
+Valor total financiado R$789,13
+"""
+
+    assert server.extract_expected_total(raw) == 876.81
+
+
+def test_select_items_matching_expected_total_finds_subset_when_ai_overextracts():
+    items = [
+        {"name": "AZUL LINHAS", "amount": 530.33},
+        {"name": "AZUL LINHAS", "amount": 126.44},
+        {"name": "JIM.COM", "amount": 57.98},
+        {"name": "AIRBNB", "amount": 33.08},
+        {"name": "AZUL LINHAS", "amount": 128.98},
+        {"name": "DEMais FATURAS", "amount": 876.81},
+    ]
+
+    selected = server.select_items_matching_expected_total(items, 876.81)
+
+    assert selected is not None
+    assert round(sum(item["amount"] for item in selected), 2) == 876.81
+    assert len(selected) == 5
+
+
 def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
     now = datetime.now(timezone.utc)
     fake_backend.invoice_reader_jobs.docs.append(
