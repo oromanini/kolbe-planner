@@ -1553,7 +1553,8 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
     ]
     patterns = [
         re.compile(
-            r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+R\$\s*([0-9\.,]+)$", re.IGNORECASE
+            r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+(?:R\$\s*)?([0-9\.,]+)$",
+            re.IGNORECASE,
         ),
         re.compile(r"^\d{2}/\d{2}\s+(.+?)\s+([0-9\.,]+)$", re.IGNORECASE),
         re.compile(r"^(.+?)\s+-\s+([0-9]+/[0-9]+)\s*-\s+([0-9\.,]+)$", re.IGNORECASE),
@@ -1587,6 +1588,26 @@ def extract_invoice_items(raw_text: str) -> List[dict]:
             seen.add(key)
             items.append({"name": description, "amount": round(amount, 2)})
             break
+
+    # Some PDF extractors flatten Nubank-like sections into a single paragraph,
+    # so we also scan across the whole text using date/month boundaries.
+    compact_pattern = re.compile(
+        r"(\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3})\s+(.+?)\s+(?:R\$\s*)?([0-9\.,]+)(?=\s+\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+|$)",
+        re.IGNORECASE,
+    )
+    compact_text = re.sub(r"\s+", " ", raw_text or "").strip()
+    for match in compact_pattern.finditer(compact_text):
+        description = clean_invoice_item_name(match.group(2).strip())
+        if not is_invoice_purchase_name(description):
+            continue
+        amount = parse_brl_number(match.group(3))
+        if amount is None or amount <= 0:
+            continue
+        key = (description.casefold(), round(amount, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append({"name": description, "amount": round(amount, 2)})
 
     return items
 

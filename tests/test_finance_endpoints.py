@@ -502,6 +502,23 @@ def test_invoice_reader_filters_non_purchase_lines_from_regex_parser():
     assert items == [{"name": "SHPP BRASIL INSTITUICAO DE PAG", "amount": 69.73}]
 
 
+def test_invoice_reader_extracts_nubank_items_from_compact_single_line_text():
+    raw = (
+        "NUBANK Cartão final 1234 "
+        "01 MAR IFOOD 61,89 "
+        "02 MAR UBER *TRIP 18,90 "
+        "03 MAR PAGAMENTO EM 05 MAR 100,00 "
+        "Total da fatura 80,79"
+    )
+
+    items = server.extract_invoice_items(raw)
+
+    assert items == [
+        {"name": "IFOOD", "amount": 61.89},
+        {"name": "UBER *TRIP", "amount": 18.90},
+    ]
+
+
 def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
     now = datetime.now(timezone.utc)
     fake_backend.invoice_reader_jobs.docs.append(
