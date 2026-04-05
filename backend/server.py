@@ -1024,6 +1024,13 @@ class IncomeCreate(BaseModel):
     month: str
 
 
+class IncomeUpdate(BaseModel):
+    name: str
+    amount: float
+    category: str
+    month: str
+
+
 class SavingsCreate(BaseModel):
     name: str
     type: str
@@ -2184,6 +2191,42 @@ async def create_income(
     }
     await db.incomes.insert_one(income)
     return sanitize_mongo_document(income)
+
+
+@api_router.put("/finance/incomes/{income_id}")
+async def update_income(
+    income_id: str,
+    data: IncomeUpdate,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+
+    canonical_category = await resolve_user_category_name(
+        user.user_id, data.category, expected_type="income"
+    )
+    if not canonical_category:
+        raise HTTPException(status_code=400, detail="Invalid income category")
+
+    result = await db.incomes.update_one(
+        {"income_id": income_id, "user_id": user.user_id},
+        {
+            "$set": {
+                "name": data.name,
+                "amount": data.amount,
+                "category": canonical_category,
+                "month": data.month,
+            }
+        },
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Income not found")
+
+    updated_income = await db.incomes.find_one(
+        {"income_id": income_id, "user_id": user.user_id}
+    )
+    return sanitize_mongo_document(updated_income)
 
 
 @api_router.delete("/finance/incomes/{income_id}")

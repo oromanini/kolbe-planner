@@ -212,10 +212,22 @@ def test_categories_create_different_names_do_not_collide(fake_backend):
 
 def test_categories_update_delete_and_force_delete_with_linked_expenses(fake_backend):
     fake_backend.financial_categories.docs.append(
-        {"category_id": "cat_1", "user_id": "user_1", "name": "Mercado", "icon": "cart"}
+        {
+            "category_id": "cat_1",
+            "user_id": "user_1",
+            "name": "Mercado",
+            "icon": "cart",
+            "type": "expense",
+        }
     )
     fake_backend.financial_categories.docs.append(
-        {"category_id": "cat_2", "user_id": "user_1", "name": "Lazer", "icon": "smile"}
+        {
+            "category_id": "cat_2",
+            "user_id": "user_1",
+            "name": "Lazer",
+            "icon": "smile",
+            "type": "expense",
+        }
     )
     fake_backend.expenses.docs.append(
         {
@@ -248,7 +260,7 @@ def test_categories_update_delete_and_force_delete_with_linked_expenses(fake_bac
     assert blocked_delete.value.status_code == 409
 
     deleted = run(server.delete_category("cat_1", force=True))
-    assert deleted["deleted_expenses"] == 1
+    assert deleted["deleted_items"] == 1
 
 
 def test_expenses_get_create_and_delete(fake_backend):
@@ -258,6 +270,7 @@ def test_expenses_get_create_and_delete(fake_backend):
             "user_id": "user_1",
             "name": "Transporte",
             "icon": "car",
+            "type": "expense",
         }
     )
 
@@ -307,6 +320,7 @@ def test_expenses_accept_category_id_and_case_insensitive_name(fake_backend):
             "user_id": "user_1",
             "name": "Transporte",
             "name_key": "transporte",
+            "type": "expense",
         }
     )
 
@@ -338,13 +352,43 @@ def test_expenses_accept_category_id_and_case_insensitive_name(fake_backend):
 
 
 def test_incomes_get_create_and_delete(fake_backend):
+    fake_backend.financial_categories.docs.append(
+        {
+            "category_id": "cat_inc_1",
+            "user_id": "user_1",
+            "name": "Salário",
+            "name_key": "salário",
+            "type": "income",
+        }
+    )
+
     created = run(
         server.create_income(
-            server.IncomeCreate(name="Salário", amount=3200, month="2026-03")
+            server.IncomeCreate(
+                name="Salário CLT",
+                amount=3200,
+                category="Salário",
+                month="2026-03",
+            )
         )
     )
-    assert created["name"] == "Salário"
+    assert created["name"] == "Salário CLT"
     assert "_id" not in created
+
+    updated = run(
+        server.update_income(
+            created["income_id"],
+            server.IncomeUpdate(
+                name="Salário + bônus",
+                amount=3500,
+                category="cat_inc_1",
+                month="2026-03",
+            ),
+        )
+    )
+    assert updated["name"] == "Salário + bônus"
+    assert updated["amount"] == 3500
+    assert updated["category"] == "Salário"
 
     monthly = run(server.get_incomes("2026-03"))
     assert len(monthly) == 1
@@ -355,6 +399,34 @@ def test_incomes_get_create_and_delete(fake_backend):
     with pytest.raises(HTTPException) as missing:
         run(server.delete_income("inc_missing"))
     assert missing.value.status_code == 404
+
+
+def test_income_update_rejects_invalid_category(fake_backend):
+    fake_backend.incomes.docs.append(
+        {
+            "income_id": "inc_1",
+            "user_id": "user_1",
+            "name": "Freela",
+            "amount": 1200,
+            "category": "Projetos",
+            "month": "2026-03",
+        }
+    )
+
+    with pytest.raises(HTTPException) as invalid_category:
+        run(
+            server.update_income(
+                "inc_1",
+                server.IncomeUpdate(
+                    name="Freela",
+                    amount=1200,
+                    category="Categoria inexistente",
+                    month="2026-03",
+                ),
+            )
+        )
+
+    assert invalid_category.value.status_code == 400
 
 
 def test_savings_get_create_and_update(fake_backend):

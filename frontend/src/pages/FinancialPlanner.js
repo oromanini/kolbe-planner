@@ -74,6 +74,7 @@ export default function FinancialPlanner() {
   const [showIncomeForm, setShowIncomeForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
+  const [isSubmittingIncome, setIsSubmittingIncome] = useState(false);
   const [isSubmittingCategory, setIsSubmittingCategory] = useState(false);
   const [isSyncingCategories, setIsSyncingCategories] = useState(false);
   const [expenseToDelete, setExpenseToDelete] = useState(null);
@@ -84,6 +85,7 @@ export default function FinancialPlanner() {
   const [newExpense, setNewExpense] = useState({ name: "", amount: 0, method_id: "", category: "", subcategory: "" });
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [newIncome, setNewIncome] = useState({ name: "", amount: 0, category: "" });
+  const [editingIncomeId, setEditingIncomeId] = useState(null);
   const [incomeAmountInput, setIncomeAmountInput] = useState("0,00");
   const [expensePage, setExpensePage] = useState(1);
   const [incomePage, setIncomePage] = useState(1);
@@ -373,33 +375,60 @@ export default function FinancialPlanner() {
     }
   };
 
-  const handleAddIncome = async (e) => {
+  const handleSaveIncome = async (e) => {
     e.preventDefault();
+    if (isSubmittingIncome) return;
+
     if (!newIncome.category) {
       toast.error("Selecione uma categoria de receita");
       return;
     }
 
+    const isEditing = Boolean(editingIncomeId);
+
+    setIsSubmittingIncome(true);
     try {
-      const response = await apiRequest(`/finance/incomes`, {
-        method: "POST",
+      const response = await apiRequest(isEditing ? `/finance/incomes/${editingIncomeId}` : `/finance/incomes`, {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...newIncome, month: currentMonth }),
       });
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
-        throw new Error(errorPayload?.detail || "Erro ao adicionar entrada");
+        throw new Error(errorPayload?.detail || "Erro ao salvar receita");
       }
 
-      toast.success("Entrada adicionada");
+      const savedIncome = await response.json();
+      toast.success(isEditing ? "Receita atualizada" : "Entrada adicionada");
       setShowIncomeForm(false);
+      setEditingIncomeId(null);
       setNewIncome({ name: "", amount: 0, category: "" });
       setIncomeAmountInput("0,00");
+      if (isEditing) {
+        setIncomes((prev) => prev.map((income) => (
+          income.income_id === editingIncomeId ? savedIncome : income
+        )));
+      } else {
+        setIncomes((prev) => [savedIncome, ...prev]);
+      }
       loadData();
     } catch (error) {
-      toast.error(getErrorMessage(error, "Erro ao adicionar entrada"));
+      toast.error(getErrorMessage(error, "Erro ao salvar receita"));
+    } finally {
+      setIsSubmittingIncome(false);
     }
+  };
+
+  const handleStartEditIncome = (income) => {
+    setShowIncomeForm(true);
+    setEditingIncomeId(income.income_id);
+    setNewIncome({
+      name: income.name,
+      amount: income.amount,
+      category: income.category || "",
+    });
+    setIncomeAmountInput(formatCurrencyInput(income.amount));
   };
 
   const handleSaveCategory = async (e) => {
@@ -825,6 +854,7 @@ export default function FinancialPlanner() {
               <button
                 onClick={() => {
                   if (!showIncomeForm) {
+                    setEditingIncomeId(null);
                     setNewIncome({ name: "", amount: 0, category: "" });
                     setIncomeAmountInput("0,00");
                   }
@@ -837,7 +867,7 @@ export default function FinancialPlanner() {
             </div>
 
             {showIncomeForm && (
-              <form onSubmit={handleAddIncome} className="glass-card p-6 mb-6 space-y-4">
+              <form onSubmit={handleSaveIncome} className="glass-card p-6 mb-6 space-y-4">
                 <input
                   placeholder="Nome"
                   value={newIncome.name}
@@ -878,19 +908,21 @@ export default function FinancialPlanner() {
                 <div className="flex gap-3">
                   <button
                     type="submit"
-                    disabled={!incomeCategories.length}
+                    disabled={isSubmittingIncome || !incomeCategories.length}
                     className="flex-1 bg-primary text-white px-6 py-3 rounded-full font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    Adicionar
+                    {isSubmittingIncome ? "Salvando..." : editingIncomeId ? "Atualizar" : "Adicionar"}
                   </button>
                   <button
                     type="button"
+                    disabled={isSubmittingIncome}
                     onClick={() => {
                       setShowIncomeForm(false);
+                      setEditingIncomeId(null);
                       setNewIncome({ name: "", amount: 0, category: "" });
                       setIncomeAmountInput("0,00");
                     }}
-                    className="px-6 py-3 border border-white/20 rounded-full"
+                    className="px-6 py-3 border border-white/20 rounded-full disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     Cancelar
                   </button>
@@ -908,7 +940,12 @@ export default function FinancialPlanner() {
                       {income.category || "Sem categoria"}
                     </p>
                   </div>
-                  <p className="font-heading text-xl text-primary">R$ {income.amount.toFixed(2)}</p>
+                  <div className="flex items-center gap-3">
+                    <p className="font-heading text-xl text-primary">R$ {income.amount.toFixed(2)}</p>
+                    <button onClick={() => handleStartEditIncome(income)} className="p-1.5 rounded-md hover:bg-white/5">
+                      <Pencil className="w-4 h-4 text-slate-300" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
