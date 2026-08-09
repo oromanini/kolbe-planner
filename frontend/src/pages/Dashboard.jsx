@@ -8,8 +8,9 @@ import TutorialModal from "../components/TutorialModal";
 import NotificationBell from "../components/NotificationBell";
 import { toast } from "sonner";
 import { authFetch, clearAuthToken } from "../lib/api";
+import { BACKEND_URL } from "../lib/env";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 
 export default function Dashboard() {
   const navigate = useNavigate();

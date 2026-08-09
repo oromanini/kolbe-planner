@@ -12,8 +12,8 @@ import AdminQuotes from "./pages/AdminQuotes";
 import { Toaster } from "./components/ui/sonner";
 import PlannerTipsAssistant from "./components/PlannerTipsAssistant";
 import { authFetch } from "./lib/api";
+import { BACKEND_URL } from "./lib/env";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
 // ProtectedRoute Component

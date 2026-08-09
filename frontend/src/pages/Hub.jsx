@@ -2,8 +2,9 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Target, DollarSign, LogOut } from "lucide-react";
 import { authFetch, clearAuthToken } from "../lib/api";
+import { BACKEND_URL } from "../lib/env";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 
 export default function Hub() {
   const navigate = useNavigate();

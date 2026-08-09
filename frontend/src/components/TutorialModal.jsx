@@ -3,8 +3,9 @@ import { motion } from "framer-motion";
 import { ArrowRight, Check, Sparkles, Zap } from "lucide-react";
 import { Dialog, DialogContent } from "./ui/dialog";
 import { authFetch } from "../lib/api";
+import { BACKEND_URL } from "../lib/env";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 
 export default function TutorialModal({ onComplete, onClose, kolbeMode = false }) {
   const [step, setStep] = useState(1);
