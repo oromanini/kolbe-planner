@@ -1,0 +1,221 @@
+"""Cliente mínimo para a API da Groq (compatível com OpenAI em /openai/v1).
+
+Restrições da plataforma que moldam este cliente:
+
+* A Groq **não aceita PDF nativo**. Só texto ou imagens. Por isso o motor de
+  faturas envia o texto já extraído do PDF (pypdf preserva a ordem de leitura),
+  e não o arquivo.
+* Visão (escalonamento futuro): no máximo 5 imagens por requisição e 4MB por
+  imagem em base64. Não é usado aqui.
+* Free tier: 30 requisições/minuto e 6.000-30.000 tokens/minuto conforme o
+  modelo, no nível da organização. Uma fatura em texto gasta ~1.700-2.900
+  tokens, o que cabe com folga em uma requisição.
+
+Sobre structured output: a Groq expõe `response_format` no padrão OpenAI, mas o
+suporte a `json_schema` varia por modelo e há relatos de modelos que aceitam o
+parâmetro e ignoram o schema. Por isso este cliente tenta `json_schema`, cai
+para `json_object` (JSON mode) quando a API rejeita o formato, e **sempre**
+devolve o JSON cru para o chamador validar contra o schema em código.
+"""
+
+import json
+import logging
+import os
+import re
+from typing import List, Optional
+
+logger = logging.getLogger(__name__)
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_CHAT_COMPLETIONS_PATH = "/chat/completions"
+
+# Modelo padrão. `openai/gpt-oss-120b` é o substituto recomendado pela Groq nas
+# depreciações de 2026 (Kimi K2, Qwen 3 32B, Llama 4 Scout/Maverick) e é o
+# modelo de texto de uso geral disponível hoje no free tier.
+DEFAULT_GROQ_INVOICE_MODEL = "openai/gpt-oss-120b"
+
+# Modelo multimodal, para o escalonamento por visão (fase seguinte).
+DEFAULT_GROQ_VISION_MODEL = "qwen/qwen3.6-27b"
+
+GROQ_MAX_IMAGES_PER_REQUEST = 5
+GROQ_MAX_BASE64_IMAGE_BYTES = 4 * 1024 * 1024
+
+GROQ_REQUEST_TIMEOUT_SECONDS = 60
+
+RESPONSE_FORMAT_AUTO = "auto"
+RESPONSE_FORMAT_JSON_SCHEMA = "json_schema"
+RESPONSE_FORMAT_JSON_OBJECT = "json_object"
+
+# Códigos que indicam "esse modelo/rota não aceita o response_format pedido".
+_UNSUPPORTED_FORMAT_STATUS = {400, 404, 415, 422}
+
+
+def get_groq_api_key() -> str:
+    return (os.getenv("GROQ_API_KEY") or "").strip()
+
+
+def get_groq_model() -> str:
+    return (
+        os.getenv("GROQ_INVOICE_MODEL") or DEFAULT_GROQ_INVOICE_MODEL
+    ).strip() or DEFAULT_GROQ_INVOICE_MODEL
+
+
+def get_response_format_mode() -> str:
+    mode = (os.getenv("GROQ_INVOICE_RESPONSE_FORMAT") or RESPONSE_FORMAT_AUTO).strip()
+    if mode not in {
+        RESPONSE_FORMAT_AUTO,
+        RESPONSE_FORMAT_JSON_SCHEMA,
+        RESPONSE_FORMAT_JSON_OBJECT,
+    }:
+        return RESPONSE_FORMAT_AUTO
+    return mode
+
+
+def is_groq_configured() -> bool:
+    return bool(get_groq_api_key())
+
+
+def build_response_format(mode: str, schema: dict, schema_name: str) -> dict:
+    if mode == RESPONSE_FORMAT_JSON_OBJECT:
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+    }
+
+
+def _response_format_attempts(mode: str) -> List[str]:
+    if mode == RESPONSE_FORMAT_JSON_SCHEMA:
+        return [RESPONSE_FORMAT_JSON_SCHEMA]
+    if mode == RESPONSE_FORMAT_JSON_OBJECT:
+        return [RESPONSE_FORMAT_JSON_OBJECT]
+    return [RESPONSE_FORMAT_JSON_SCHEMA, RESPONSE_FORMAT_JSON_OBJECT]
+
+
+def extract_message_content(body: dict) -> str:
+    """Lê o texto da primeira choice de uma resposta chat/completions."""
+    for choice in (body or {}).get("choices", []) or []:
+        message = choice.get("message") or {}
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        # Alguns modelos devolvem content como lista de blocos.
+        if isinstance(content, list):
+            joined = "".join(
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") in {"text", "output_text"}
+            )
+            if joined.strip():
+                return joined
+    return ""
+
+
+def parse_json_object(text: str) -> Optional[dict]:
+    """Converte a resposta em dict, tolerando cercas de código e texto ao redor.
+
+    JSON mode não garante um objeto limpo, então isso precisa ser defensivo.
+    """
+    candidate = (text or "").strip()
+    if not candidate:
+        return None
+
+    fenced = re.search(r"```(?:json)?\s*(.+?)```", candidate, flags=re.DOTALL)
+    if fenced:
+        candidate = fenced.group(1).strip()
+
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(candidate[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def request_json(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    schema: dict,
+    schema_name: str,
+    model: Optional[str] = None,
+    temperature: float = 0.0,
+    max_completion_tokens: int = 8192,
+    timeout: int = GROQ_REQUEST_TIMEOUT_SECONDS,
+) -> Optional[dict]:
+    """Pede um objeto JSON ao modelo e devolve o dict cru (sem validar schema).
+
+    Devolve None quando não há chave configurada, quando a chamada falha ou
+    quando a resposta não é um objeto JSON. A validação do contrato é
+    responsabilidade do chamador — `json_schema` não é garantido em todo modelo.
+    """
+    api_key = get_groq_api_key()
+    if not api_key:
+        return None
+
+    import requests
+
+    base_payload = {
+        "model": (model or get_groq_model()),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": temperature,
+        "max_completion_tokens": max_completion_tokens,
+    }
+
+    last_error: Optional[Exception] = None
+    for mode in _response_format_attempts(get_response_format_mode()):
+        payload = dict(base_payload)
+        payload["response_format"] = build_response_format(mode, schema, schema_name)
+        try:
+            response = requests.post(
+                f"{GROQ_BASE_URL}{GROQ_CHAT_COMPLETIONS_PATH}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+            status_code = getattr(response, "status_code", None)
+            if (
+                mode == RESPONSE_FORMAT_JSON_SCHEMA
+                and status_code in _UNSUPPORTED_FORMAT_STATUS
+            ):
+                logger.warning(
+                    "Groq recusou response_format json_schema (HTTP %s); "
+                    "repetindo em JSON mode.",
+                    status_code,
+                )
+                continue
+            response.raise_for_status()
+            body = response.json()
+        except Exception as exc:  # rede, HTTP ou JSON inválido
+            last_error = exc
+            if mode == RESPONSE_FORMAT_JSON_SCHEMA:
+                logger.warning("Falha na chamada Groq com json_schema: %s", exc)
+                continue
+            logger.warning("Falha na chamada Groq: %s", exc)
+            return None
+
+        parsed = parse_json_object(extract_message_content(body))
+        if parsed is not None:
+            return parsed
+        if mode == RESPONSE_FORMAT_JSON_SCHEMA:
+            logger.warning("Resposta da Groq não era JSON; repetindo em JSON mode.")
+            continue
+        return None
+
+    if last_error is not None:
+        logger.warning("Groq indisponível para esta fatura: %s", last_error)
+    return None

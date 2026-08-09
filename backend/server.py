@@ -27,12 +27,24 @@ import hashlib
 import json
 import re
 import asyncio
-import base64
 import smtplib
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 from io import BytesIO
 import importlib
+
+try:  # pragma: no cover - depende de como o app é iniciado
+    from backend.invoice_ai import (  # noqa: F401
+        extract_invoice_document,
+        reconcile_invoice_document,
+        select_items_matching_expected_total,
+    )
+except ImportError:  # o Dockerfile roda `uvicorn server:app` de dentro de backend/
+    from invoice_ai import (  # noqa: F401
+        extract_invoice_document,
+        reconcile_invoice_document,
+        select_items_matching_expected_total,
+    )
 
 
 ROOT_DIR = Path(__file__).parent
@@ -1202,17 +1214,6 @@ async def cleanup_expired_invoice_jobs(user_id: str):
             )
 
 
-def detect_bank_name(raw_text: str) -> str:
-    text = (raw_text or "").lower()
-    if "nubank" in text or " nu " in text:
-        return "Nubank"
-    if "itaú" in text or "itau" in text:
-        return "Itau"
-    if "neon" in text:
-        return "Neon"
-    return "Cartão"
-
-
 def detect_card_suffix(raw_text: str) -> str:
     text = raw_text or ""
     patterns = [
@@ -1226,414 +1227,6 @@ def detect_card_suffix(raw_text: str) -> str:
         if match:
             return match.group(1)
     return "XXXX"
-
-
-def parse_brl_number(raw_value: str) -> Optional[float]:
-    candidate = (raw_value or "").strip()
-    if not candidate:
-        return None
-    normalized = re.sub(r"[^0-9,.-]", "", candidate)
-    if not normalized:
-        return None
-    normalized = normalized.replace(".", "").replace(",", ".")
-    try:
-        return float(normalized)
-    except ValueError:
-        return None
-
-
-INVOICE_NON_PURCHASE_FLAGS = [
-    "pagamento",
-    "estorno",
-    "anuidade",
-    "juros",
-    "iof",
-    "encargos",
-    "seguro",
-    "limite",
-    "saldo restante",
-    "fatura anterior",
-    "pagamento mínimo",
-    "composição do pagamento mínimo",
-    "parcelamentos",
-    "juros rotativo",
-    "total a pagar",
-    "valor da entrada",
-    "valor da parcela",
-    "juros totais",
-    "cet",
-]
-
-
-def clean_invoice_item_name(name: str) -> str:
-    cleaned = (name or "").replace("→", " ").replace("•", " ")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -\n\t")
-    return cleaned
-
-
-def is_invoice_purchase_name(name: str) -> bool:
-    cleaned = clean_invoice_item_name(name)
-    lowered = cleaned.casefold()
-    if not cleaned:
-        return False
-    return not any(flag in lowered for flag in INVOICE_NON_PURCHASE_FLAGS)
-
-
-def extract_invoice_items_with_ai(
-    raw_text: str, expected_total: Optional[float] = None
-) -> List[dict]:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
-        return []
-
-    snippet = (raw_text or "")[:24000]
-    expected_hint = ""
-    if expected_total is not None:
-        expected_hint = (
-            f"Total esperado da fatura: {expected_total:.2f}. "
-            "Priorize linhas de compra cuja soma bata com esse total.\n"
-        )
-
-    prompt = (
-        "Extraia apenas lançamentos de compra de uma fatura de cartão. "
-        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
-        "Ignore também seções de parcelamento/rotativo como: saldo restante, CET, valor da entrada, valor da parcela, total a pagar e composição de pagamento mínimo. "
-        "Considere layouts de bancos brasileiros variados (Itau, Nubank, Bradesco, Santander e outros). "
-        "Responda somente JSON válido no formato: "
-        '{"items":[{"name":"texto","amount":123.45}]}. '
-        "Use amount com ponto decimal e valor positivo.\n"
-        f"{expected_hint}\n"
-        f"Texto bruto:\n{snippet}"
-    )
-
-    payload = {
-        "model": os.getenv("OPENAI_INVOICE_MODEL", "gpt-4.1-mini"),
-        "input": [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Você é um extrator de lançamentos de fatura. Retorne apenas JSON.",
-                    }
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": prompt,
-                    }
-                ],
-            },
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "invoice_items",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "items": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "amount": {"type": "number"},
-                                },
-                                "required": ["name", "amount"],
-                                "additionalProperties": False,
-                            },
-                        }
-                    },
-                    "required": ["items"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-    }
-
-    return run_invoice_ai_payload(payload, api_key)
-
-
-def extract_invoice_items_from_pdf_with_ai(
-    pdf_bytes: bytes, filename: str, expected_total: Optional[float] = None
-) -> List[dict]:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key or not pdf_bytes:
-        return []
-
-    encoded_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-    expected_hint = ""
-    if expected_total is not None:
-        expected_hint = (
-            f"Total esperado da fatura: {expected_total:.2f}. "
-            "Priorize linhas de compra cuja soma bata com esse total.\n"
-        )
-
-    prompt = (
-        "Extraia apenas lançamentos de compra da fatura anexada. "
-        "Ignore pagamentos, estornos, IOF, juros, encargos, anuidade, seguros e limites. "
-        "Ignore também seções de parcelamento/rotativo como: saldo restante, CET, valor da entrada, valor da parcela, total a pagar e composição de pagamento mínimo. "
-        "Em faturas do Nubank, foque na seção TRANSAÇÕES e descarte as seções de Pagamentos e Financiamentos. "
-        "Responda somente JSON válido no formato: "
-        '{"items":[{"name":"texto","amount":123.45}]}. '
-        "Use amount com ponto decimal e valor positivo.\n"
-        f"{expected_hint}"
-    )
-
-    payload = {
-        "model": os.getenv("OPENAI_INVOICE_MODEL", "gpt-4.1-mini"),
-        "input": [
-            {
-                "role": "system",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Você é um extrator de lançamentos de fatura. Retorne apenas JSON.",
-                    }
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_file",
-                        "filename": filename or "fatura.pdf",
-                        "file_data": f"data:application/pdf;base64,{encoded_pdf}",
-                    },
-                    {
-                        "type": "input_text",
-                        "text": prompt,
-                    },
-                ],
-            },
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "invoice_items",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "items": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "amount": {"type": "number"},
-                                },
-                                "required": ["name", "amount"],
-                                "additionalProperties": False,
-                            },
-                        }
-                    },
-                    "required": ["items"],
-                    "additionalProperties": False,
-                },
-            }
-        },
-    }
-
-    return run_invoice_ai_payload(payload, api_key)
-
-
-def run_invoice_ai_payload(payload: dict, api_key: str) -> List[dict]:
-
-    try:
-        import requests
-
-        response = requests.post(
-            "https://api.openai.com/v1/responses",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=40,
-        )
-        response.raise_for_status()
-        body = response.json()
-    except Exception:
-        return []
-
-    output_text = body.get("output_text")
-    if not output_text:
-        for item in body.get("output", []):
-            for content in item.get("content", []):
-                if content.get("type") == "output_text" and content.get("text"):
-                    output_text = content["text"]
-                    break
-            if output_text:
-                break
-
-    if not output_text:
-        return []
-
-    try:
-        parsed = json.loads(output_text)
-    except json.JSONDecodeError:
-        return []
-
-    cleaned = []
-    seen = set()
-    for entry in parsed.get("items", []):
-        name = clean_invoice_item_name(str(entry.get("name", "")))
-        amount_raw = entry.get("amount")
-        amount = (
-            float(amount_raw)
-            if isinstance(amount_raw, (int, float))
-            else parse_brl_number(str(amount_raw))
-        )
-        if not name or amount is None or amount <= 0 or not is_invoice_purchase_name(name):
-            continue
-        key = (name.casefold(), round(amount, 2))
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append({"name": name, "amount": round(amount, 2)})
-    return cleaned
-
-
-def extract_expected_total(raw_text: str) -> Optional[float]:
-    patterns = [
-        r"total\s+da\s+sua\s+fatura[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-        r"total\s+da\s+fatura[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-        r"lan[çc]amentos\s+no\s+cart[aã]o[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-        r"total\s+dos\s+lan[çc]amentos\s+atuais[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-        r"valor\s+do\s+documento[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-        r"valor\s+total(?!\s+financiado)[^0-9-]{0,50}(-?[0-9][0-9\.,]*)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, raw_text, flags=re.IGNORECASE)
-        if not match:
-            continue
-        amount = parse_brl_number(match.group(1))
-        if amount is not None and amount > 0:
-            return amount
-    return None
-
-
-def select_items_matching_expected_total(
-    items: List[dict], expected_total: Optional[float]
-) -> Optional[List[dict]]:
-    if expected_total is None or not items:
-        return None
-
-    target_cents = int(round(expected_total * 100))
-    item_cents = [int(round(max(item.get("amount", 0), 0) * 100)) for item in items]
-    parsed_cents = sum(item_cents)
-    if parsed_cents == target_cents:
-        return items
-    if target_cents <= 0 or parsed_cents < target_cents:
-        return None
-
-    # Subset-sum in cents to recover when AI mixes "lançamentos atuais" with
-    # "próximas faturas" sections.
-    reachable = {0: None}
-    for idx, cents in enumerate(item_cents):
-        if cents <= 0:
-            continue
-        for total in sorted(reachable.keys(), reverse=True):
-            new_total = total + cents
-            if new_total > target_cents or new_total in reachable:
-                continue
-            reachable[new_total] = (total, idx)
-        if target_cents in reachable:
-            break
-
-    if target_cents not in reachable:
-        return None
-
-    selected_indices = set()
-    cursor = target_cents
-    while cursor:
-        previous = reachable.get(cursor)
-        if previous is None:
-            return None
-        cursor, idx = previous
-        selected_indices.add(idx)
-
-    if len(selected_indices) == len(items):
-        return items
-    return [item for idx, item in enumerate(items) if idx in selected_indices]
-
-
-def _parse_invoice_entries(raw_text: str, *, keep_purchase_entries: bool) -> List[dict]:
-    entries = []
-    seen = set()
-    lines = [
-        line.strip() for line in (raw_text or "").splitlines() if line and line.strip()
-    ]
-    patterns = [
-        re.compile(
-            r"^\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+(.+?)\s+(?:R\$\s*)?([0-9\.,]+)$",
-            re.IGNORECASE,
-        ),
-        re.compile(r"^\d{2}/\d{2}\s+(.+?)\s+([0-9\.,]+)$", re.IGNORECASE),
-        re.compile(r"^(.+?)\s+-\s+([0-9]+/[0-9]+)\s*-\s+([0-9\.,]+)$", re.IGNORECASE),
-    ]
-
-    for line in lines:
-        for pattern in patterns:
-            match = pattern.match(line)
-            if not match:
-                continue
-            if pattern.pattern.startswith(r"^\d{2}\s+"):
-                description = clean_invoice_item_name(match.group(1).strip())
-                amount_raw = match.group(2)
-            elif pattern.pattern.startswith(r"^\d{2}/"):
-                description = clean_invoice_item_name(match.group(1).strip())
-                amount_raw = match.group(2)
-            else:
-                description = clean_invoice_item_name(
-                    f"{match.group(1).strip()} - {match.group(2).strip()}"
-                )
-                amount_raw = match.group(3)
-            is_purchase = is_invoice_purchase_name(description)
-            if keep_purchase_entries != is_purchase:
-                continue
-            amount = parse_brl_number(amount_raw)
-            if amount is None or amount <= 0:
-                continue
-            key = (description.casefold(), round(amount, 2))
-            if key in seen:
-                continue
-            seen.add(key)
-            entries.append({"name": description, "amount": round(amount, 2)})
-            break
-
-    compact_pattern = re.compile(
-        r"(\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3})\s+(.+?)\s+(?:R\$\s*)?([0-9\.,]+)(?=\s+\d{2}\s+[A-ZÇÃÕÁÉÍÓÚ]{3}\s+|$)",
-        re.IGNORECASE,
-    )
-    compact_text = re.sub(r"\s+", " ", raw_text or "").strip()
-    for match in compact_pattern.finditer(compact_text):
-        description = clean_invoice_item_name(match.group(2).strip())
-        is_purchase = is_invoice_purchase_name(description)
-        if keep_purchase_entries != is_purchase:
-            continue
-        amount = parse_brl_number(match.group(3))
-        if amount is None or amount <= 0:
-            continue
-        key = (description.casefold(), round(amount, 2))
-        if key in seen:
-            continue
-        seen.add(key)
-        entries.append({"name": description, "amount": round(amount, 2)})
-
-    return entries
-
-
-def extract_invoice_items(raw_text: str) -> List[dict]:
-    return _parse_invoice_entries(raw_text, keep_purchase_entries=True)
-
-
-def extract_non_purchase_invoice_items(raw_text: str) -> List[dict]:
-    return _parse_invoice_entries(raw_text, keep_purchase_entries=False)
 
 
 def extract_pdf_text(pdf_bytes: bytes) -> str:
@@ -1695,13 +1288,29 @@ async def process_invoice_reader_job(
     created_ids = []
     try:
         raw_text = await asyncio.to_thread(extract_pdf_text, pdf_bytes)
-        bank = detect_bank_name(raw_text)
+        document = await asyncio.to_thread(extract_invoice_document, raw_text)
+        if not document:
+            raise ValueError(
+                "A IA não conseguiu ler a fatura. Adicione os gastos manualmente."
+            )
+
+        bank = document.get("issuer") or "Cartão"
         suffix = detect_card_suffix(raw_text)
         category_name = await ensure_expense_category(user_id, f"{bank} final {suffix}")
 
         await _set_invoice_job(
             job_id,
-            {"bank_name": bank, "card_suffix": suffix, "category_name": category_name},
+            {
+                "bank_name": bank,
+                "card_suffix": suffix,
+                "category_name": category_name,
+                "doc_type": document.get("doc_type"),
+                "period": document.get("period"),
+                "due_date": document.get("due_date"),
+                "totals": document.get("totals"),
+                "ai_summary": document.get("summary"),
+                "ai_confidence": document.get("confidence"),
+            },
         )
 
         methods = await db.financial_methods.find(
@@ -1731,20 +1340,10 @@ async def process_invoice_reader_job(
         if not method:
             raise ValueError("Método padrão de cartão não encontrado")
 
-        expected_total = extract_expected_total(raw_text)
-        items = await asyncio.to_thread(
-            extract_invoice_items_from_pdf_with_ai, pdf_bytes, filename, expected_total
-        )
-        if not items:
-            items = await asyncio.to_thread(
-                extract_invoice_items_with_ai, raw_text, expected_total
-            )
-        if not items:
-            items = await asyncio.to_thread(extract_invoice_items, raw_text)
-        matched_items = select_items_matching_expected_total(items, expected_total)
-        if matched_items:
-            items = matched_items
-        parsed_total = round(sum(item["amount"] for item in items), 2)
+        reconciliation = reconcile_invoice_document(document)
+        items = reconciliation["purchase_items"]
+        expected_total = reconciliation["anchor_total"]
+        parsed_total = reconciliation["purchase_total"]
 
         await _set_invoice_job(
             job_id,
@@ -1752,6 +1351,10 @@ async def process_invoice_reader_job(
                 "parsed_count": len(items),
                 "parsed_total": parsed_total,
                 "expected_total": expected_total,
+                "reconciliation_status": reconciliation["status"],
+                "reconciliation_anchor_label": reconciliation["anchor_label"],
+                "non_purchase_count": len(reconciliation["charge_items"]),
+                "non_purchase_total": reconciliation["charge_total"],
             },
         )
 
@@ -1760,35 +1363,25 @@ async def process_invoice_reader_job(
                 "A IA não conseguiu identificar lançamentos da fatura. Adicione os gastos manualmente."
             )
 
-        if expected_total is not None and abs(parsed_total - expected_total) > 0.01:
-            non_purchase_items = extract_non_purchase_invoice_items(raw_text)
-            non_purchase_total = round(
-                sum(item["amount"] for item in non_purchase_items), 2
+        # A conferência aritmética nunca é pulada: sem uma âncora de
+        # conciliação não há como confirmar a leitura, e o job falha em vez de
+        # gravar gastos sem conferência.
+        if reconciliation["status"] == "no_anchor":
+            raise ValueError(
+                "A IA não identificou o total de compras da fatura para conferir a soma dos lançamentos. Adicione os gastos manualmente."
             )
-            gap = round(expected_total - parsed_total, 2)
-            if (
-                gap > 0
-                and non_purchase_total > 0
-                and abs(non_purchase_total - gap) <= 0.01
-            ):
-                await _set_invoice_job(
-                    job_id,
-                    {
-                        "non_purchase_count": len(non_purchase_items),
-                        "non_purchase_total": non_purchase_total,
-                    },
-                )
-            else:
-                raise ValueError(
-                    f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
-                )
+
+        if reconciliation["status"] == "mismatch":
+            raise ValueError(
+                f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
+            )
 
         now_iso = datetime.now(timezone.utc).isoformat()
         for item in items:
             expense_doc = {
                 "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
                 "user_id": user_id,
-                "name": item["name"],
+                "name": item["description"],
                 "amount": item["amount"],
                 "method_id": method["method_id"],
                 "category": category_name,
@@ -2380,6 +1973,10 @@ async def create_invoice_reader_job(
         "expected_total": None,
         "parsed_total": None,
         "parsed_count": 0,
+        "reconciliation_status": None,
+        "reconciliation_anchor_label": None,
+        "ai_summary": None,
+        "ai_confidence": None,
         "created_expense_ids": [],
         "errors": [],
         "started_at": None,
