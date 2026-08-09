@@ -13,10 +13,11 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from pymongo.errors import DuplicateKeyError
 import os
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
@@ -39,11 +40,20 @@ load_dotenv(ROOT_DIR / ".env")
 
 # MongoDB connection
 mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncMongoClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Create the indexes on boot and release the Mongo client on shutdown."""
+    await create_database_indexes()
+    yield
+    await client.close()
+
+
 # Create the main app without a prefix
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -2925,7 +2935,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@app.on_event("startup")
 async def create_database_indexes():
     """Create MongoDB indexes used by frequent finance queries."""
     await db.expenses.create_index([("user_id", 1), ("month", 1)])
@@ -2942,8 +2951,3 @@ async def create_database_indexes():
     await db.notifications.create_index(
         [("user_id", 1), ("dedupe_key", 1)], unique=True
     )
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

@@ -4,8 +4,9 @@ import { motion } from "framer-motion";
 import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { authFetch } from "../lib/api";
+import { BACKEND_URL } from "../lib/env";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 
 const PRESET_COLORS = [
   { name: "Imperial Red", value: "#CD1C33" },

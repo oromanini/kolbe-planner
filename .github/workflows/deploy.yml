@@ -86,7 +86,7 @@ jobs:
           PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${FRONTEND_SERVICE}:${GITHUB_SHA}"
           docker build \
-            --build-arg REACT_APP_BACKEND_URL="${BACKEND_URL}" \
+            --build-arg VITE_BACKEND_URL="${BACKEND_URL}" \
             -t "${IMAGE}" frontend
           docker push "${IMAGE}"
           echo "FRONTEND_IMAGE=${IMAGE}" >> $GITHUB_ENV

@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { authFetch } from "../lib/api";
+import { BACKEND_URL } from "../lib/env";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${BACKEND_URL}/api`;
 
 export default function SettingsPage() {
   const navigate = useNavigate();

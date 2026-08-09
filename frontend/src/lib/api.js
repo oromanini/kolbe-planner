@@ -1,6 +1,6 @@
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || window.location.origin;
+import { BACKEND_URL } from "./env";
 
-export const API_BASE = `${BACKEND_URL}/api`;
+export const API_BASE = `${BACKEND_URL || window.location.origin}/api`;
 const AUTH_TOKEN_KEY = "kp_session_token";
 
 const wait = (ms) => new Promise((resolve) => {
