@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-
 os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "test_database")
 
-from backend import server  # noqa: E402
+from backend import invoice_ai, server  # noqa: E402
+from tests.fixtures import invoices  # noqa: E402
 
 
 class FakeCursor:
@@ -511,48 +511,22 @@ def test_health_check_reports_ok(fake_backend):
     assert result["checks"]["collections"] == "ok"
 
 
-def test_invoice_reader_extractors_parse_examples():
-    nubank_line = "12 FEV iFood - NuPay R$ 61,89"
-    itau_line = "04/07 AZUL LINHAS IP 8/12 530,33"
-    raw = f"""NUBANK
+def test_detect_card_suffix_reads_masked_card_number():
+    raw = """NUBANK
 Cartão final 7071
-Total da fatura R$ 591,89
-{nubank_line}
-{itau_line}
 """
 
-    items = server.extract_invoice_items(raw)
-    assert any(
-        item["name"] == "iFood - NuPay" and item["amount"] == 61.89 for item in items
-    )
-    assert any(
-        "AZUL LINHAS IP 8/12" in item["name"] and item["amount"] == 530.33
-        for item in items
-    )
-    assert server.extract_expected_total(raw) == 591.89
-    assert server.detect_bank_name(raw) == "Nubank"
     assert server.detect_card_suffix(raw) == "7071"
-
-
-def test_extract_expected_total_prefers_invoice_total_over_payment_and_financed_total():
-    raw = """
-O total da sua fatura é:
-R$ 876,81
-Pagamento via conta -1.312,97
-Valor total financiado R$789,13
-"""
-
-    assert server.extract_expected_total(raw) == 876.81
 
 
 def test_select_items_matching_expected_total_finds_subset_when_ai_overextracts():
     items = [
-        {"name": "AZUL LINHAS", "amount": 530.33},
-        {"name": "AZUL LINHAS", "amount": 126.44},
-        {"name": "JIM.COM", "amount": 57.98},
-        {"name": "AIRBNB", "amount": 33.08},
-        {"name": "AZUL LINHAS", "amount": 128.98},
-        {"name": "DEMais FATURAS", "amount": 876.81},
+        {"description": "AZUL LINHAS", "amount": 530.33},
+        {"description": "AZUL LINHAS", "amount": 126.44},
+        {"description": "JIM.COM", "amount": 57.98},
+        {"description": "AIRBNB", "amount": 33.08},
+        {"description": "AZUL LINHAS", "amount": 128.98},
+        {"description": "DEMais FATURAS", "amount": 876.81},
     ]
 
     selected = server.select_items_matching_expected_total(items, 876.81)
@@ -560,50 +534,6 @@ def test_select_items_matching_expected_total_finds_subset_when_ai_overextracts(
     assert selected is not None
     assert round(sum(item["amount"] for item in selected), 2) == 876.81
     assert len(selected) == 5
-
-
-def test_invoice_reader_filters_non_purchase_lines_from_regex_parser():
-    raw = """
-11 FEV SALDO RESTANTE DA FATURA ANTERIOR R$ 0,00
-11 FEV SHPP BRASIL INSTITUICAO DE PAG R$ 69,73
-11 FEV COMPOSIÇÃO DO PAGAMENTO MÍNIMO R$ 349,09
-"""
-
-    items = server.extract_invoice_items(raw)
-
-    assert items == [{"name": "SHPP BRASIL INSTITUICAO DE PAG", "amount": 69.73}]
-
-
-def test_invoice_reader_extracts_nubank_items_from_compact_single_line_text():
-    raw = (
-        "NUBANK Cartão final 1234 "
-        "01 MAR IFOOD 61,89 "
-        "02 MAR UBER *TRIP 18,90 "
-        "03 MAR PAGAMENTO EM 05 MAR 100,00 "
-        "Total da fatura 80,79"
-    )
-
-    items = server.extract_invoice_items(raw)
-
-    assert items == [
-        {"name": "IFOOD", "amount": 61.89},
-        {"name": "UBER *TRIP", "amount": 18.90},
-    ]
-
-
-def test_extract_non_purchase_invoice_items_from_compact_text():
-    raw = (
-        "NEON 24 FEV UBER * PENDING 12,48 "
-        "28 FEV IOF - HOSTINGER.COM 0,27 "
-        "09 FEV Pagamento Fatura 116,59"
-    )
-
-    items = server.extract_non_purchase_invoice_items(raw)
-
-    assert items == [
-        {"name": "IOF - HOSTINGER.COM", "amount": 0.27},
-        {"name": "Pagamento Fatura", "amount": 116.59},
-    ]
 
 
 def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
@@ -643,236 +573,149 @@ def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
     )
 
 
-def test_invoice_reader_ai_extractor_uses_openai_response(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "output_text": '{"items":[{"name":"AZUL LINHAS IP 8/12","amount":530.33},{"name":"JIM.COM *3726A4/05","amount":57.98}]}'
-            }
-
-    class FakeRequests:
-        @staticmethod
-        def post(*_args, **_kwargs):
-            return FakeResponse()
-
-    import sys
-
-    monkeypatch.setitem(sys.modules, "requests", FakeRequests)
-
-    items = server.extract_invoice_items_with_ai("fatura exemplo")
-    assert len(items) == 2
-    assert items[0]["name"] == "AZUL LINHAS IP 8/12"
-    assert items[0]["amount"] == 530.33
-
-
-def test_invoice_reader_ai_extractor_discards_rotativo_and_payment_entries(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "output_text": '{"items":[{"name":"Pagamento em 07 FEV","amount":1425.80},{"name":"AUTO POSTO AMIGAO","amount":349.09},{"name":"Valor da parcela","amount":157.74}]}'
-            }
-
-    class FakeRequests:
-        @staticmethod
-        def post(*_args, **_kwargs):
-            return FakeResponse()
-
-    import sys
-
-    monkeypatch.setitem(sys.modules, "requests", FakeRequests)
-
-    items = server.extract_invoice_items_with_ai("fatura exemplo")
-    assert items == [{"name": "AUTO POSTO AMIGAO", "amount": 349.09}]
-
-
-def test_invoice_reader_pdf_ai_extractor_sends_pdf_file(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    captured = {}
-
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"output_text": '{"items":[{"name":"COMPRA","amount":10.5}]}'}
-
-    class FakeRequests:
-        @staticmethod
-        def post(*_args, **kwargs):
-            captured["json"] = kwargs.get("json", {})
-            return FakeResponse()
-
-    import sys
-
-    monkeypatch.setitem(sys.modules, "requests", FakeRequests)
-
-    items = server.extract_invoice_items_from_pdf_with_ai(b"%PDF-1.4", "fat.pdf", 10.5)
-    assert items == [{"name": "COMPRA", "amount": 10.5}]
-
-    payload = captured["json"]
-    file_part = payload["input"][1]["content"][0]
-    assert file_part["type"] == "input_file"
-    assert file_part["filename"] == "fat.pdf"
-    assert file_part["file_data"].startswith("data:application/pdf;base64,")
-
-
-def test_invoice_reader_prefers_pdf_ai_as_primary_parser(fake_backend, monkeypatch):
-    fake_backend.financial_methods.docs.append(
-        {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
-    )
-
-    raw_ai_calls = {"count": 0}
-    regex_calls = {"count": 0}
-
-    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
-    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 530.33)
-
-    monkeypatch.setattr(
-        server,
-        "extract_invoice_items_from_pdf_with_ai",
-        lambda *_args, **_kwargs: [{"name": "PDF AI ITEM", "amount": 530.33}],
-    )
-
-    def fake_raw_ai(_txt, _expected=None):
-        raw_ai_calls["count"] += 1
-        return [{"name": "RAW AI ITEM", "amount": 530.33}]
-
-    def fake_regex(_txt):
-        regex_calls["count"] += 1
-        return [{"name": "REGEX ITEM", "amount": 530.33}]
-
-    monkeypatch.setattr(server, "extract_invoice_items_with_ai", fake_raw_ai)
-    monkeypatch.setattr(server, "extract_invoice_items", fake_regex)
-
-    run(
-        server.process_invoice_reader_job(
-            "job_1", "user_1", "2026-03", "fat.pdf", b"pdf"
-        )
-    )
-
-    assert raw_ai_calls["count"] == 0
-    assert regex_calls["count"] == 0
-    assert len(fake_backend.expenses.docs) == 1
-    assert fake_backend.expenses.docs[0]["name"] == "PDF AI ITEM"
-
-
-def test_invoice_reader_accepts_gap_equal_to_non_purchase_total(
-    fake_backend, monkeypatch
-):
+def _queue_invoice_job(fake_backend, job_id):
     fake_backend.financial_methods.docs.append(
         {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
     )
     fake_backend.invoice_reader_jobs.docs.append(
-        {"job_id": "job_gap", "user_id": "user_1", "status": "queued"}
+        {"job_id": job_id, "user_id": "user_1", "status": "queued"}
     )
 
-    raw_text = (
-        "24 FEV UBER * PENDING 12,48\n"
-        "28 FEV HOSTINGER.COM 7,59\n"
-        "28 FEV IOF - HOSTINGER.COM 0,27\n"
-    )
 
-    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: raw_text)
-    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 20.34)
+def _run_invoice_job(fake_backend, monkeypatch, job_id, fixture, document=None):
+    _queue_invoice_job(fake_backend, job_id)
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: fixture.raw_text)
     monkeypatch.setattr(
         server,
-        "extract_invoice_items_from_pdf_with_ai",
-        lambda *_args, **_kwargs: [
-            {"name": "UBER * PENDING", "amount": 12.48},
-            {"name": "HOSTINGER.COM", "amount": 7.59},
-        ],
+        "extract_invoice_document",
+        lambda _txt: fixture.ai_document if document is None else document,
     )
-
     run(
         server.process_invoice_reader_job(
-            "job_gap", "user_1", "2026-03", "fat.pdf", b"pdf"
+            job_id, "user_1", "2026-08", "fat.pdf", b"%PDF-1.4"
         )
     )
-
-    assert len(fake_backend.expenses.docs) == 2
-    job = next(
+    return next(
         doc
         for doc in fake_backend.invoice_reader_jobs.docs
-        if doc.get("job_id") == "job_gap"
+        if doc.get("job_id") == job_id
     )
+
+
+def test_invoice_reader_creates_expenses_from_ai_document(fake_backend, monkeypatch):
+    job = _run_invoice_job(fake_backend, monkeypatch, "job_nubank", invoices.NUBANK)
+
     assert job["status"] == "completed"
+    assert job["bank_name"] == "Nubank"
+    assert job["expected_total"] == 452.14
+    assert job["parsed_total"] == 452.14
+    assert job["reconciliation_status"] == "ok"
+    assert job["reconciliation_anchor_label"] == "Total de compras de todos os cartões"
+    assert job["ai_summary"] == invoices.NUBANK.ai_document["summary"]
+
+    created = [(doc["name"], doc["amount"]) for doc in fake_backend.expenses.docs]
+    assert created == list(invoices.NUBANK.expected_purchases)
+    assert all(doc["month"] == "2026-08" for doc in fake_backend.expenses.docs)
+
+
+def test_invoice_reader_names_category_from_ai_issuer(fake_backend, monkeypatch):
+    _run_invoice_job(fake_backend, monkeypatch, "job_itau", invoices.ITAU)
+
+    assert [doc["name"] for doc in fake_backend.financial_categories.docs] == [
+        "Itaú final 4321"
+    ]
+    assert all(
+        doc["category"] == "Itaú final 4321" for doc in fake_backend.expenses.docs
+    )
+
+
+def test_invoice_reader_drops_next_invoice_items_via_subset_sum(
+    fake_backend, monkeypatch
+):
+    job = _run_invoice_job(
+        fake_backend, monkeypatch, "job_itau_over", invoices.ITAU_OVEREXTRACTED
+    )
+
+    assert job["status"] == "completed"
+    assert job["reconciliation_status"] == "adjusted"
+    assert job["parsed_total"] == 426.80
+    assert len(fake_backend.expenses.docs) == 3
+    assert round(sum(doc["amount"] for doc in fake_backend.expenses.docs), 2) == 426.80
+
+
+def test_invoice_reader_accepts_gap_covered_by_charges(fake_backend, monkeypatch):
+    job = _run_invoice_job(fake_backend, monkeypatch, "job_gap", invoices.NEON_GAP)
+
+    assert job["status"] == "completed"
+    assert job["reconciliation_status"] == "gap_covered"
     assert job["non_purchase_total"] == 0.27
     assert job["non_purchase_count"] == 1
+    assert len(fake_backend.expenses.docs) == 3
 
 
-def test_invoice_reader_fails_when_ai_total_does_not_match(fake_backend, monkeypatch):
-    fake_backend.financial_methods.docs.append(
-        {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
+def test_invoice_reader_fails_when_ai_finds_no_anchor(fake_backend, monkeypatch):
+    document = {**invoices.NEON.ai_document, "reconciliation_anchor": None}
+    document = invoice_ai.normalize_invoice_document(document)
+
+    job = _run_invoice_job(
+        fake_backend, monkeypatch, "job_no_anchor", invoices.NEON, document=document
     )
-    fake_backend.invoice_reader_jobs.docs.append(
-        {"job_id": "job_2", "user_id": "user_1", "status": "queued"}
+
+    assert job["status"] == "failed"
+    assert len(fake_backend.expenses.docs) == 0
+    assert "total de compras" in job["errors"][0]
+    assert "Adicione os gastos manualmente" in job["errors"][0]
+
+
+def test_invoice_reader_fails_when_sum_does_not_match_anchor(fake_backend, monkeypatch):
+    document = invoice_ai.normalize_invoice_document(
+        {
+            **invoices.NEON.ai_document,
+            "items": invoices.NEON.ai_document["items"][:2],
+        }
     )
 
+    job = _run_invoice_job(
+        fake_backend, monkeypatch, "job_mismatch", invoices.NEON, document=document
+    )
+
+    assert job["status"] == "failed"
+    assert len(fake_backend.expenses.docs) == 0
+    assert "não conseguiu conciliar" in job["errors"][0]
+
+
+def test_invoice_reader_fails_when_ai_returns_nothing(fake_backend, monkeypatch):
+    _queue_invoice_job(fake_backend, "job_empty")
     monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
-    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 100.00)
-    monkeypatch.setattr(
-        server,
+    monkeypatch.setattr(server, "extract_invoice_document", lambda _txt: None)
+
+    run(
+        server.process_invoice_reader_job(
+            "job_empty", "user_1", "2026-08", "fat.pdf", b"%PDF-1.4"
+        )
+    )
+
+    job = next(
+        doc
+        for doc in fake_backend.invoice_reader_jobs.docs
+        if doc.get("job_id") == "job_empty"
+    )
+    assert job["status"] == "failed"
+    assert len(fake_backend.expenses.docs) == 0
+    assert "Adicione os gastos manualmente" in job["errors"][0]
+
+
+def test_bank_specific_parsers_are_gone():
+    removed = [
+        "detect_bank_name",
+        "extract_expected_total",
+        "extract_invoice_items",
+        "extract_non_purchase_invoice_items",
+        "_parse_invoice_entries",
+        "INVOICE_NON_PURCHASE_FLAGS",
         "extract_invoice_items_with_ai",
-        lambda _txt, _expected=None: [{"name": "AI ITEM", "amount": 90.00}],
-    )
+        "extract_invoice_items_from_pdf_with_ai",
+        "run_invoice_ai_payload",
+    ]
 
-    run(
-        server.process_invoice_reader_job(
-            "job_2", "user_1", "2026-03", "fat.pdf", b"pdf"
-        )
-    )
-
-    assert len(fake_backend.expenses.docs) == 0
-    job = next(
-        doc
-        for doc in fake_backend.invoice_reader_jobs.docs
-        if doc.get("job_id") == "job_2"
-    )
-    assert job["status"] == "failed"
-    assert "Adicione os gastos manualmente" in job["errors"][0]
-
-
-def test_invoice_reader_fails_when_all_parsers_return_no_items(
-    fake_backend, monkeypatch
-):
-    fake_backend.financial_methods.docs.append(
-        {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
-    )
-    fake_backend.invoice_reader_jobs.docs.append(
-        {"job_id": "job_3", "user_id": "user_1", "status": "queued"}
-    )
-
-    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
-    monkeypatch.setattr(server, "extract_expected_total", lambda _txt: 100.00)
-    monkeypatch.setattr(
-        server, "extract_invoice_items_from_pdf_with_ai", lambda *_args, **_kwargs: []
-    )
-    monkeypatch.setattr(
-        server, "extract_invoice_items_with_ai", lambda _txt, _expected=None: []
-    )
-    monkeypatch.setattr(server, "extract_invoice_items", lambda _txt: [])
-
-    run(
-        server.process_invoice_reader_job(
-            "job_3", "user_1", "2026-03", "fat.pdf", b"pdf"
-        )
-    )
-
-    assert len(fake_backend.expenses.docs) == 0
-    job = next(
-        doc
-        for doc in fake_backend.invoice_reader_jobs.docs
-        if doc.get("job_id") == "job_3"
-    )
-    assert job["status"] == "failed"
-    assert "Adicione os gastos manualmente" in job["errors"][0]
+    assert [name for name in removed if hasattr(server, name)] == []
