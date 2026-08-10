@@ -18,9 +18,10 @@ from tests.fixtures import invoices  # noqa: E402
 
 
 class FakeResponse:
-    def __init__(self, body, status_code=200):
+    def __init__(self, body, status_code=200, headers=None):
         self._body = body
         self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -52,6 +53,14 @@ def groq_env(monkeypatch):
     monkeypatch.delenv("GROQ_KEY", raising=False)
     monkeypatch.delenv("GROQ_INVOICE_MODEL", raising=False)
     monkeypatch.delenv("GROQ_INVOICE_RESPONSE_FORMAT", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch):
+    """As retentativas de rate limit não podem dormir de verdade nos testes."""
+    slept = []
+    monkeypatch.setattr(groq_client, "_sleep", slept.append)
+    return slept
 
 
 def install_requests(monkeypatch, responses):
@@ -655,3 +664,107 @@ def test_reconciliation_ignores_credits_when_summing_purchases():
 
     assert result["status"] == "ok"
     assert [item["description"] for item in result["purchase_items"]] == ["COMPRA"]
+
+
+# ---------------------------------------------------------------------------
+# Rate limit e retentativas
+# ---------------------------------------------------------------------------
+
+
+def test_groq_client_retries_on_rate_limit_and_respects_retry_after(
+    groq_env, monkeypatch, no_real_sleep
+):
+    fake = install_requests(
+        monkeypatch,
+        [
+            FakeResponse(
+                {"error": "rate limit"}, status_code=429, headers={"Retry-After": "7"}
+            ),
+            FakeResponse(chat_completion(json.dumps(invoices.NEON.ai_document))),
+        ],
+    )
+
+    document = invoice_ai.extract_invoice_document(invoices.NEON.raw_text)
+
+    assert document is not None
+    assert len(fake.calls) == 2
+    assert no_real_sleep == [7.0]
+    # Rate limit é cota, não formato: a retentativa usa o MESMO response_format.
+    assert fake.calls[1]["json"]["response_format"]["type"] == "json_schema"
+
+
+def test_groq_client_backs_off_exponentially_without_retry_after(
+    groq_env, monkeypatch, no_real_sleep
+):
+    install_requests(
+        monkeypatch,
+        [
+            FakeResponse({"error": "rate limit"}, status_code=429),
+            FakeResponse({"error": "rate limit"}, status_code=429),
+            FakeResponse(chat_completion(json.dumps(invoices.NEON.ai_document))),
+        ],
+    )
+
+    assert invoice_ai.extract_invoice_document(invoices.NEON.raw_text) is not None
+    assert no_real_sleep == [2.0, 4.0]
+
+
+def test_groq_client_gives_up_after_max_retries_without_burning_json_mode(
+    groq_env, monkeypatch, no_real_sleep
+):
+    monkeypatch.setenv("GROQ_MAX_RETRIES", "2")
+    fake = install_requests(
+        monkeypatch, [FakeResponse({"error": "rate limit"}, status_code=429)]
+    )
+
+    assert invoice_ai.extract_invoice_document(invoices.NEON.raw_text) is None
+    # 1 tentativa + 2 retentativas, e nenhuma chamada extra em JSON mode.
+    assert len(fake.calls) == 3
+    assert all(
+        call["json"]["response_format"]["type"] == "json_schema" for call in fake.calls
+    )
+
+
+def test_groq_client_retries_transient_server_errors(
+    groq_env, monkeypatch, no_real_sleep
+):
+    fake = install_requests(
+        monkeypatch,
+        [
+            FakeResponse({"error": "bad gateway"}, status_code=502),
+            FakeResponse(chat_completion(json.dumps(invoices.NEON.ai_document))),
+        ],
+    )
+
+    assert invoice_ai.extract_invoice_document(invoices.NEON.raw_text) is not None
+    assert len(fake.calls) == 2
+
+
+def test_retry_delay_is_capped(groq_env):
+    huge = FakeResponse({}, status_code=429, headers={"Retry-After": "9999"})
+
+    assert groq_client.retry_delay_seconds(huge, 0) == (
+        groq_client.GROQ_MAX_RETRY_DELAY_SECONDS
+    )
+    # Retry-After em formato de data HTTP cai no backoff.
+    http_date = FakeResponse(
+        {}, status_code=429, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
+    )
+    assert groq_client.retry_delay_seconds(http_date, 0) == 2.0
+
+
+def test_unsupported_format_is_not_treated_as_rate_limit(
+    groq_env, monkeypatch, no_real_sleep
+):
+    """400 continua significando 'troque de formato', sem retentativa."""
+    fake = install_requests(
+        monkeypatch,
+        [
+            FakeResponse({"error": "invalid json schema"}, status_code=400),
+            FakeResponse(chat_completion(json.dumps(invoices.NEON.ai_document))),
+        ],
+    )
+
+    assert invoice_ai.extract_invoice_document(invoices.NEON.raw_text) is not None
+    assert no_real_sleep == []
+    assert fake.calls[1]["json"]["response_format"] == {"type": "json_object"}

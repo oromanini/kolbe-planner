@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -1266,3 +1267,302 @@ def test_bank_specific_parsers_are_gone():
     ]
 
     assert [name for name in removed if hasattr(server, name)] == []
+
+
+def test_batch_analysis_caps_concurrent_groq_calls(fake_backend, monkeypatch):
+    """Uma pasta com N contas não pode disparar N chamadas de uma vez.
+
+    O free tier da Groq limita tokens por minuto na organização: sem teto, o
+    lote inteiro volta em 429 e o usuário vê metade dos documentos falhando.
+    """
+    import threading
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "2")
+    server._invoice_ai_semaphores.clear()
+
+    lock = threading.Lock()
+    state = {"running": 0, "peak": 0}
+
+    def fake_extract(_raw_text, **_kwargs):
+        with lock:
+            state["running"] += 1
+            state["peak"] = max(state["peak"], state["running"])
+        time.sleep(0.02)
+        with lock:
+            state["running"] -= 1
+        return invoice_ai.normalize_invoice_document(invoices.CONTA_LUZ.ai_document)
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "conta")
+    monkeypatch.setattr(server, "extract_invoice_document", fake_extract)
+
+    job_ids = [f"doc_lote_{index}" for index in range(6)]
+    for job_id in job_ids:
+        _seed_document(fake_backend, job_id)
+
+    async def analyze_all():
+        await asyncio.gather(
+            *[
+                server.analyze_invoice_document(job_id, "user_1", b"%PDF-1.4")
+                for job_id in job_ids
+            ]
+        )
+
+    run(analyze_all())
+
+    assert state["peak"] <= 2
+    assert all(
+        _get_document(fake_backend, job_id)["status"]
+        == server.INVOICE_STATUS_AWAITING_REVIEW
+        for job_id in job_ids
+    )
+
+
+def test_invoice_ai_concurrency_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "nao-e-numero")
+    assert (
+        server.get_invoice_ai_max_concurrency()
+        == server.DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+    )
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "0")
+    assert (
+        server.get_invoice_ai_max_concurrency()
+        == server.DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+    )
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "5")
+    assert server.get_invoice_ai_max_concurrency() == 5
+
+
+# ---------------------------------------------------------------------------
+# Edição do rascunho antes de aprovar
+# ---------------------------------------------------------------------------
+
+
+def _edit(job_id, **fields):
+    return run(
+        server.update_invoice_reader_draft(
+            job_id, server.InvoiceDraftUpdateRequest(**fields)
+        )
+    )
+
+
+def _plan_of(document):
+    return [(entry["name"], entry["amount"]) for entry in document["expense_plan"]]
+
+
+def test_editing_a_description_keeps_the_document_conferred(fake_backend, monkeypatch):
+    document = _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+    assert document["reconciled"] is True
+    original = _plan_of(document)
+
+    plan = [dict(entry) for entry in document["expense_plan"]]
+    plan[1]["name"] = "Padaria Central Ltda"
+    edited = _edit("doc_itau", expense_plan=plan)
+
+    assert edited["reconciled"] is True
+    assert edited["review_warning"] is None
+    assert edited["edited"] is True
+    assert edited["edited_at"]
+    assert edited["expense_plan"][1]["name"] == "Padaria Central Ltda"
+    # A leitura original fica guardada: é o sinal do aprendizado por emissor.
+    assert _plan_of({"expense_plan": edited["ai_expense_plan"]}) == original
+
+    run(server.approve_invoice_reader_document("doc_itau"))
+    assert sorted(doc["name"] for doc in fake_backend.expenses.docs) == sorted(
+        ["AuroraApple 13/18", "Padaria Central Ltda", "Posto Avenida"]
+    )
+
+
+def test_editing_the_category_changes_where_the_expense_lands(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    edited = _edit("doc_luz", category_name="  Contas de casa  ")
+    assert edited["category_name"] == "Contas de casa"
+    assert edited["reconciled"] is True
+
+    run(server.approve_invoice_reader_document("doc_luz"))
+    assert fake_backend.expenses.docs[0]["category"] == "Contas de casa"
+
+
+def test_editing_an_amount_that_breaks_the_sum_blocks_approval(
+    fake_backend, monkeypatch
+):
+    document = _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+
+    plan = [dict(entry) for entry in document["expense_plan"]]
+    plan[0]["amount"] = 149.00  # era 150,00
+    edited = _edit("doc_itau", expense_plan=plan)
+
+    assert edited["reconciled"] is False
+    assert "425.80" in edited["review_warning"]
+    assert "426.80" in edited["review_warning"]
+
+    with pytest.raises(HTTPException) as blocked:
+        run(server.approve_invoice_reader_document("doc_itau"))
+    assert blocked.value.status_code == 409
+    assert "Corrija os lançamentos" in blocked.value.detail
+    assert len(fake_backend.expenses.docs) == 0
+
+
+def test_editing_can_unblock_a_document_the_ai_failed_to_reconcile(
+    fake_backend, monkeypatch
+):
+    """O ganho principal da fase: consertar sem gastar uma contestação."""
+    incomplete = invoice_ai.normalize_invoice_document(
+        {
+            **invoices.ITAU.ai_document,
+            "items": invoices.ITAU.ai_document["items"][:2],
+        }
+    )
+    document = _analyze(
+        fake_backend, monkeypatch, "doc_itau", invoices.ITAU, document=incomplete
+    )
+
+    assert document["reconciled"] is False
+    assert document["reconciliation_status"] == "mismatch"
+    with pytest.raises(HTTPException):
+        run(server.approve_invoice_reader_document("doc_itau"))
+
+    # O usuário está olhando o PDF e adiciona o lançamento que a IA perdeu.
+    plan = [dict(entry) for entry in document["expense_plan"]]
+    plan.append({"name": "Posto Avenida", "amount": 196.50})
+    edited = _edit("doc_itau", expense_plan=plan)
+
+    assert edited["reconciled"] is True
+    assert edited["review_warning"] is None
+    assert edited["parsed_total"] == 426.80
+    assert edited["parsed_count"] == 3
+    # A leitura da IA continua registrada como não conciliada: quem fechou a
+    # conta foi o usuário, e o histórico não mente sobre isso.
+    assert edited["reconciliation_status"] == "mismatch"
+
+    run(server.approve_invoice_reader_document("doc_itau"))
+    assert len(fake_backend.expenses.docs) == 3
+    assert round(sum(doc["amount"] for doc in fake_backend.expenses.docs), 2) == 426.80
+
+
+def test_editing_cannot_unblock_a_document_without_an_anchor(fake_backend, monkeypatch):
+    """Sem âncora não há contra o que conferir: edição nenhuma destrava."""
+    anchorless = invoice_ai.normalize_invoice_document(
+        {**invoices.CONTA_LUZ.ai_document, "reconciliation_anchor": None}
+    )
+    document = _analyze(
+        fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ, document=anchorless
+    )
+
+    assert document["reconciled"] is False
+    assert document["plan_target"] is None
+
+    edited = _edit("doc_luz", expense_plan=[{"name": "Conta de luz", "amount": 10.0}])
+
+    assert edited["reconciled"] is False
+    assert "não identificou" in edited["review_warning"]
+    with pytest.raises(HTTPException) as blocked:
+        run(server.approve_invoice_reader_document("doc_luz"))
+    assert blocked.value.status_code == 409
+
+
+def test_gap_covered_document_survives_an_edit(fake_backend, monkeypatch):
+    """Em gap_covered o alvo é a soma abençoada, não a âncora."""
+    document = _analyze(fake_backend, monkeypatch, "doc_neon", invoices.NEON_GAP)
+    assert document["reconciliation_status"] == "gap_covered"
+    assert document["plan_target"] == document["parsed_total"]
+    assert document["plan_target"] != document["expected_total"]
+
+    plan = [dict(entry) for entry in document["expense_plan"]]
+    plan[0]["name"] = "UBER TRIP corrigido"
+    edited = _edit("doc_neon", expense_plan=plan)
+
+    assert edited["reconciled"] is True
+    run(server.approve_invoice_reader_document("doc_neon"))
+    assert len(fake_backend.expenses.docs) == 3
+
+
+@pytest.mark.parametrize(
+    "plan,expected_detail",
+    [
+        ([], "Rejeite-o"),
+        ([{"name": "   ", "amount": 10.0}], "descrição"),
+        ([{"name": "Conta", "amount": 0}], "maior que zero"),
+        ([{"name": "Conta", "amount": -5.0}], "maior que zero"),
+    ],
+)
+def test_editing_rejects_invalid_plans(
+    fake_backend, monkeypatch, plan, expected_detail
+):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    with pytest.raises(HTTPException) as refused:
+        _edit("doc_luz", expense_plan=plan)
+
+    assert refused.value.status_code == 400
+    assert expected_detail in refused.value.detail
+
+
+def test_editing_rejects_an_absurd_number_of_items(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    huge = [
+        {"name": f"Item {index}", "amount": 1.0}
+        for index in range(server.INVOICE_MAX_PLAN_ITEMS + 1)
+    ]
+
+    with pytest.raises(HTTPException) as refused:
+        _edit("doc_luz", expense_plan=huge)
+
+    assert refused.value.status_code == 400
+
+
+def test_editing_an_empty_payload_changes_nothing(fake_backend, monkeypatch):
+    document = _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    unchanged = _edit("doc_luz")
+
+    assert unchanged["expense_plan"] == document["expense_plan"]
+    assert unchanged["edited"] is False
+
+
+def test_editing_is_refused_outside_review(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    with pytest.raises(HTTPException) as refused:
+        _edit("doc_luz", category_name="Outra")
+
+    assert refused.value.status_code == 409
+    assert "aguardando revisão" in refused.value.detail
+
+
+def test_reanalysis_after_contest_discards_the_edit(fake_backend, monkeypatch):
+    document = _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+    plan = [dict(entry) for entry in document["expense_plan"]]
+    plan[0]["name"] = "Nome que o usuário digitou"
+    _edit("doc_itau", expense_plan=plan)
+
+    scheduled = _capture_background_tasks(monkeypatch)
+    run(
+        server.contest_invoice_reader_document(
+            "doc_itau",
+            server.InvoiceContestRequest(message="a primeira compra é outra"),
+        )
+    )
+    _mock_ai(monkeypatch, invoices.ITAU)
+    for coro in scheduled:
+        run(coro)
+
+    reread = _get_document(fake_backend, "doc_itau")
+    assert reread["edited"] is False
+    assert reread["expense_plan"][0]["name"] == "AuroraApple 13/18"
+
+
+def test_editing_another_users_document_is_not_found(fake_backend, monkeypatch):
+    _analyze(
+        fake_backend, monkeypatch, "doc_alheio", invoices.CONTA_LUZ, user_id="user_2"
+    )
+
+    with pytest.raises(HTTPException) as refused:
+        _edit("doc_alheio", category_name="Minha")
+
+    assert refused.value.status_code == 404

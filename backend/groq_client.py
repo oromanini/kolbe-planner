@@ -22,7 +22,8 @@ import json
 import logging
 import os
 import re
-from typing import List, Optional
+import time
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,15 @@ RESPONSE_FORMAT_JSON_OBJECT = "json_object"
 
 # Códigos que indicam "esse modelo/rota não aceita o response_format pedido".
 _UNSUPPORTED_FORMAT_STATUS = {400, 404, 415, 422}
+
+# Códigos que pedem para tentar de novo, não para mudar de formato. O free tier
+# limita a 30 requisições/minuto e 6.000-30.000 tokens/minuto no nível da
+# organização, então um lote de documentos bate em 429 com facilidade.
+_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+
+DEFAULT_GROQ_MAX_RETRIES = 3
+DEFAULT_GROQ_RETRY_BASE_SECONDS = 2.0
+GROQ_MAX_RETRY_DELAY_SECONDS = 30.0
 
 
 # O secret usado no GitHub Actions se chama GROQ_KEY; aceitamos os dois nomes
@@ -149,6 +159,116 @@ def parse_json_object(text: str) -> Optional[dict]:
     return parsed if isinstance(parsed, dict) else None
 
 
+_VERDICT_OK = "ok"
+_VERDICT_NEXT_MODE = "next_mode"
+_VERDICT_GIVE_UP = "give_up"
+
+
+def get_max_retries() -> int:
+    raw_value = (os.getenv("GROQ_MAX_RETRIES") or "").strip()
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return DEFAULT_GROQ_MAX_RETRIES
+    return max(0, value)
+
+
+def _sleep(seconds: float) -> None:
+    """Isolado para os testes não dormirem de verdade."""
+    time.sleep(seconds)
+
+
+def retry_delay_seconds(response, attempt: int) -> float:
+    """Respeita o Retry-After da Groq; sem ele, backoff exponencial."""
+    headers = getattr(response, "headers", None) or {}
+    for header in ("Retry-After", "retry-after"):
+        raw_value = headers.get(header) if hasattr(headers, "get") else None
+        if raw_value is None:
+            continue
+        try:
+            return min(max(float(raw_value), 0.0), GROQ_MAX_RETRY_DELAY_SECONDS)
+        except (TypeError, ValueError):
+            # Retry-After também aceita data HTTP; nesse caso cai no backoff.
+            break
+    delay = DEFAULT_GROQ_RETRY_BASE_SECONDS * (2**attempt)
+    return min(delay, GROQ_MAX_RETRY_DELAY_SECONDS)
+
+
+def _request_with_retries(
+    requests_module, payload: dict, api_key: str, timeout: int, mode: str
+) -> Tuple[Optional[dict], str]:
+    """Uma tentativa de formato, com retentativas para 429 e erros transitórios.
+
+    O 429 é um problema de cota, não de formato: repetir a mesma requisição em
+    JSON mode só gastaria uma segunda chamada de uma conta já limitada. Por isso
+    o rate limit retenta o MESMO modo e, se não passar, desiste.
+    """
+    max_retries = get_max_retries()
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests_module.post(
+                f"{GROQ_BASE_URL}{GROQ_CHAT_COMPLETIONS_PATH}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+            status_code = getattr(response, "status_code", None)
+
+            if (
+                mode == RESPONSE_FORMAT_JSON_SCHEMA
+                and status_code in _UNSUPPORTED_FORMAT_STATUS
+            ):
+                logger.warning(
+                    "Groq recusou response_format json_schema (HTTP %s); "
+                    "repetindo em JSON mode.",
+                    status_code,
+                )
+                return None, _VERDICT_NEXT_MODE
+
+            if status_code in _RETRYABLE_STATUS:
+                if attempt >= max_retries:
+                    logger.warning(
+                        "Groq segue indisponível (HTTP %s) após %s tentativas.",
+                        status_code,
+                        attempt + 1,
+                    )
+                    return None, _VERDICT_GIVE_UP
+                delay = retry_delay_seconds(response, attempt)
+                logger.warning(
+                    "Groq respondeu HTTP %s; nova tentativa em %.1fs.",
+                    status_code,
+                    delay,
+                )
+                _sleep(delay)
+                continue
+
+            response.raise_for_status()
+            body = response.json()
+        except Exception as exc:  # rede, HTTP ou corpo inválido
+            # Erro de rede não é retentado aqui: sem status não dá para saber se
+            # é transitório, e insistir multiplicaria a chamada pelos dois
+            # formatos. Quem retenta o documento inteiro é o usuário.
+            if mode == RESPONSE_FORMAT_JSON_SCHEMA:
+                logger.warning("Falha na chamada Groq com json_schema: %s", exc)
+                return None, _VERDICT_NEXT_MODE
+            logger.warning("Falha na chamada Groq: %s", exc)
+            return None, _VERDICT_GIVE_UP
+
+        parsed = parse_json_object(extract_message_content(body))
+        if parsed is not None:
+            return parsed, _VERDICT_OK
+        if mode == RESPONSE_FORMAT_JSON_SCHEMA:
+            logger.warning("Resposta da Groq não era JSON; repetindo em JSON mode.")
+            return None, _VERDICT_NEXT_MODE
+        return None, _VERDICT_GIVE_UP
+
+    return None, _VERDICT_GIVE_UP
+
+
 def request_json(
     *,
     system_prompt: str,
@@ -182,49 +302,16 @@ def request_json(
         "max_completion_tokens": max_completion_tokens,
     }
 
-    last_error: Optional[Exception] = None
     for mode in _response_format_attempts(get_response_format_mode()):
         payload = dict(base_payload)
         payload["response_format"] = build_response_format(mode, schema, schema_name)
-        try:
-            response = requests.post(
-                f"{GROQ_BASE_URL}{GROQ_CHAT_COMPLETIONS_PATH}",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=timeout,
-            )
-            status_code = getattr(response, "status_code", None)
-            if (
-                mode == RESPONSE_FORMAT_JSON_SCHEMA
-                and status_code in _UNSUPPORTED_FORMAT_STATUS
-            ):
-                logger.warning(
-                    "Groq recusou response_format json_schema (HTTP %s); "
-                    "repetindo em JSON mode.",
-                    status_code,
-                )
-                continue
-            response.raise_for_status()
-            body = response.json()
-        except Exception as exc:  # rede, HTTP ou JSON inválido
-            last_error = exc
-            if mode == RESPONSE_FORMAT_JSON_SCHEMA:
-                logger.warning("Falha na chamada Groq com json_schema: %s", exc)
-                continue
-            logger.warning("Falha na chamada Groq: %s", exc)
-            return None
-
-        parsed = parse_json_object(extract_message_content(body))
-        if parsed is not None:
+        parsed, verdict = _request_with_retries(
+            requests, payload, api_key, timeout, mode
+        )
+        if verdict == _VERDICT_OK:
             return parsed
-        if mode == RESPONSE_FORMAT_JSON_SCHEMA:
-            logger.warning("Resposta da Groq não era JSON; repetindo em JSON mode.")
+        if verdict == _VERDICT_NEXT_MODE:
             continue
         return None
 
-    if last_error is not None:
-        logger.warning("Groq indisponível para esta fatura: %s", last_error)
     return None
