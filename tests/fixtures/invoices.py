@@ -180,13 +180,13 @@ R$ 407,14
 
 TRANSAÇÕES
 01 AGO
- •••• 1876 Facebk *Fh8qvvvp92
+ •••• 4321 Servico Online *Xy12ab34
 USD 12.97
 Conversão: USD 1 = R$ 5,28
 R$ 68,49
 
 11 JUL
- POSTO JK
+ POSTO EXEMPLO
  Total a pagar: R$ 177,98 (valor da transação de R$ 156,90 + R$ 1,55 de IOF +
 R$ 19,53 de juros).
 R$ 177,98
@@ -225,7 +225,7 @@ NUBANK_DOCUMENT = {
     "items": [
         {
             "date": "2026-08-01",
-            "description": "Facebk *Fh8qvvvp92",
+            "description": "Servico Online *Xy12ab34",
             "amount": 68.49,
             "type": "compra",
             "original_currency": "USD",
@@ -234,7 +234,7 @@ NUBANK_DOCUMENT = {
             # O valor lançado é a última linha do bloco, não os números da
             # explicação (156,90 + 1,55 + 19,53).
             "date": "2026-07-11",
-            "description": "POSTO JK",
+            "description": "POSTO EXEMPLO",
             "amount": 177.98,
             "type": "compra",
         },
@@ -271,8 +271,8 @@ NUBANK = InvoiceFixture(
     anchor_label="Total de compras de todos os cartões",
     anchor_total=452.14,
     expected_purchases=(
-        ("Facebk *Fh8qvvvp92", 68.49),
-        ("POSTO JK", 177.98),
+        ("Servico Online *Xy12ab34", 68.49),
+        ("POSTO EXEMPLO", 177.98),
         ("MERCADO SAO JOSE - Parcela 2 de 6", 33.53),
         ("ASSINATURA STREAM", 172.14),
     ),

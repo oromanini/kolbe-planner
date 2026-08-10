@@ -373,7 +373,7 @@ def test_nubank_fixture_covers_the_multiline_block_traps():
     assert by_description["MERCADO SAO JOSE - Parcela 2 de 6"]["amount"] == 33.53
     assert by_description["MERCADO SAO JOSE - Parcela 2 de 6"]["type"] == "parcela"
     # Explicação do bloco não vira item nem substitui o valor lançado.
-    assert by_description["POSTO JK"]["amount"] == 177.98
+    assert by_description["POSTO EXEMPLO"]["amount"] == 177.98
     assert not any(
         item["amount"] in {156.90, 1.55, 19.53} for item in document["items"]
     )
@@ -381,7 +381,7 @@ def test_nubank_fixture_covers_the_multiline_block_traps():
     assert by_description["ASSINATURA STREAM"]["amount"] == 172.14
     # Estorno com menos Unicode continua negativo e fora das compras.
     assert by_description["ESTORNO LOJA DEZ"]["amount"] == -45.00
-    assert by_description["Facebk *Fh8qvvvp92"]["original_currency"] == "USD"
+    assert by_description["Servico Online *Xy12ab34"]["original_currency"] == "USD"
 
 
 def test_nubank_anchor_is_the_purchases_total_not_the_amount_due():
