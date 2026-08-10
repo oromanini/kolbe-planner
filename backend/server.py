@@ -35,13 +35,29 @@ import importlib
 
 try:  # pragma: no cover - depende de como o app é iniciado
     from backend.invoice_ai import (  # noqa: F401
+        DOC_TYPE_CARD,
+        DOC_TYPE_LABELS,
+        RECONCILED_STATUSES,
+        REGIME_CARD,
+        REGIME_SINGLE_CHARGE,
+        default_category_for_doc_type,
+        document_regime,
         extract_invoice_document,
+        normalize_doc_type,
         reconcile_invoice_document,
         select_items_matching_expected_total,
     )
 except ImportError:  # o Dockerfile roda `uvicorn server:app` de dentro de backend/
     from invoice_ai import (  # noqa: F401
+        DOC_TYPE_CARD,
+        DOC_TYPE_LABELS,
+        RECONCILED_STATUSES,
+        REGIME_CARD,
+        REGIME_SINGLE_CHARGE,
+        default_category_for_doc_type,
+        document_regime,
         extract_invoice_document,
+        normalize_doc_type,
         reconcile_invoice_document,
         select_items_matching_expected_total,
     )
@@ -942,6 +958,28 @@ async def initialize_default_habits(
         {"name": "Duolingo", "color": "#58CC02", "icon": "globe"},
     ]
 
+    habits = []
+    for i, h in enumerate(default_habits):
+        habit = {
+            "habit_id": f"habit_{uuid.uuid4().hex[:12]}",
+            "user_id": user.user_id,
+            "name": h["name"],
+            "color": h["color"],
+            "icon": h["icon"],
+            "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime(
+                "%Y-%m-%d"
+            ),
+            "frequency": "daily",
+            "order": i,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        habits.append(habit)
+
+    await db.habits.insert_many(habits)
+
+    return {"message": f"Created {len(habits)} default habits"}
+
 
 # ============ FINANCIAL MODELS ============
 
@@ -998,20 +1036,66 @@ class Savings(BaseModel):
     updated_at: datetime
 
 
+class InvoiceContestation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    message: str
+    created_at: datetime
+
+
+class InvoiceReaderBatch(BaseModel):
+    """Um upload de N documentos, revisados um a um."""
+
+    model_config = ConfigDict(extra="ignore")
+    batch_id: str
+    user_id: str
+    requested_month: str
+    document_ids: List[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 class InvoiceReaderJob(BaseModel):
+    """Um documento do lote: rascunho enquanto não for aprovado."""
+
     model_config = ConfigDict(extra="ignore")
     job_id: str
+    batch_id: Optional[str] = None
     user_id: str
-    status: Literal["queued", "processing", "completed", "failed"] = "queued"
-    source_type: Literal["credit_card_pdf"] = "credit_card_pdf"
+    status: Literal[
+        "analisando",
+        "aguardando_revisao",
+        "aprovado",
+        "contestado",
+        "rejeitado",
+        "falhou",
+    ] = "analisando"
+    source_type: Literal["documento_pdf"] = "documento_pdf"
     filename: str
     requested_month: str
+    doc_type: Optional[str] = None
+    regime: Optional[str] = None
+    issuer: Optional[str] = None
     bank_name: Optional[str] = None
     card_suffix: Optional[str] = None
+    suggested_category: Optional[str] = None
     category_name: Optional[str] = None
+    method_name: Optional[str] = None
+    subcategory: Optional[str] = None
+    period: Optional[str] = None
+    due_date: Optional[str] = None
+    ai_summary: Optional[str] = None
+    ai_confidence: Optional[float] = None
+    reconciliation_status: Optional[str] = None
+    reconciliation_anchor_label: Optional[str] = None
+    reconciled: bool = False
+    review_warning: Optional[str] = None
     expected_total: Optional[float] = None
     parsed_total: Optional[float] = None
     parsed_count: int = 0
+    amount_total: Optional[float] = None
+    # O rascunho: o que vira gasto quando (e se) o usuário aprovar.
+    expense_plan: List[dict] = Field(default_factory=list)
+    contestations: List[InvoiceContestation] = Field(default_factory=list)
+    attempts: int = 0
     created_expense_ids: List[str] = Field(default_factory=list)
     errors: List[str] = Field(default_factory=list)
     started_at: Optional[datetime] = None
@@ -1181,7 +1265,35 @@ class InvoiceImportRequest(BaseModel):
     requested_month: str
 
 
-INVOICE_JOB_RETENTION_MINUTES = 5
+class InvoiceContestRequest(BaseModel):
+    message: str
+
+
+# Estados de um documento no fluxo de revisão humana.
+INVOICE_STATUS_ANALYZING = "analisando"
+INVOICE_STATUS_AWAITING_REVIEW = "aguardando_revisao"
+INVOICE_STATUS_APPROVED = "aprovado"
+INVOICE_STATUS_CONTESTED = "contestado"
+INVOICE_STATUS_REJECTED = "rejeitado"
+INVOICE_STATUS_FAILED = "falhou"
+
+# Só some da lista o que o usuário já resolveu. Documento aguardando revisão
+# (ou sendo reanalisado) nunca é apagado: apagá-lo tiraria da frente do usuário
+# justamente o que ele precisa revisar.
+INVOICE_TERMINAL_STATUSES = frozenset(
+    {INVOICE_STATUS_APPROVED, INVOICE_STATUS_REJECTED, INVOICE_STATUS_FAILED}
+)
+INVOICE_JOB_RETENTION_DAYS = 7
+
+# Quantas vezes o usuário pode contestar a leitura do mesmo documento.
+INVOICE_MAX_CONTESTATIONS = 3
+
+# Teto do texto do PDF guardado para reprocessar em caso de contestação.
+INVOICE_RAW_TEXT_MAX_CHARS = 40000
+
+INVOICE_CARD_METHOD_NAME = "crédito a vista"
+INVOICE_BILL_METHOD_NAME = "boleto"
+INVOICE_CARD_SUBCATEGORY = "fatura-cartao"
 
 
 def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -1194,14 +1306,12 @@ def parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
 
 
 async def cleanup_expired_invoice_jobs(user_id: str):
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        minutes=INVOICE_JOB_RETENTION_MINUTES
-    )
+    cutoff = datetime.now(timezone.utc) - timedelta(days=INVOICE_JOB_RETENTION_DAYS)
     jobs = await db.invoice_reader_jobs.find(
         {"user_id": user_id}, {"_id": 0, "job_id": 1, "status": 1, "finished_at": 1}
     ).to_list(500)
     for job in jobs:
-        if job.get("status") not in {"completed", "failed"}:
+        if job.get("status") not in INVOICE_TERMINAL_STATUSES:
             continue
         finished_at = parse_iso_datetime(job.get("finished_at"))
         if not finished_at:
@@ -1272,146 +1382,281 @@ async def ensure_expense_category(user_id: str, category_name: str) -> str:
     return category_doc["name"]
 
 
-async def _set_invoice_job(job_id: str, patch: dict):
+async def _set_invoice_job(job_id: str, patch: dict, user_id: Optional[str] = None):
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.invoice_reader_jobs.update_one({"job_id": job_id}, {"$set": patch})
+    query = {"job_id": job_id}
+    if user_id:
+        query["user_id"] = user_id
+    await db.invoice_reader_jobs.update_one(query, {"$set": patch})
 
 
-async def process_invoice_reader_job(
-    job_id: str, user_id: str, requested_month: str, filename: str, pdf_bytes: bytes
-):
-    await _set_invoice_job(
-        job_id,
-        {"status": "processing", "started_at": datetime.now(timezone.utc).isoformat()},
-    )
-    errors = []
-    created_ids = []
-    try:
-        raw_text = await asyncio.to_thread(extract_pdf_text, pdf_bytes)
-        document = await asyncio.to_thread(extract_invoice_document, raw_text)
-        if not document:
-            raise ValueError(
-                "A IA não conseguiu ler a fatura. Adicione os gastos manualmente."
-            )
+def public_invoice_document(document: Optional[dict]) -> Optional[dict]:
+    """Tira do payload o que é uso interno (o texto cru do PDF)."""
+    if document is None:
+        return None
+    return {
+        key: value for key, value in document.items() if key not in {"_id", "raw_text"}
+    }
 
-        bank = document.get("issuer") or "Cartão"
-        suffix = detect_card_suffix(raw_text)
-        category_name = await ensure_expense_category(user_id, f"{bank} final {suffix}")
 
-        await _set_invoice_job(
-            job_id,
-            {
-                "bank_name": bank,
-                "card_suffix": suffix,
-                "category_name": category_name,
-                "doc_type": document.get("doc_type"),
-                "period": document.get("period"),
-                "due_date": document.get("due_date"),
-                "totals": document.get("totals"),
-                "ai_summary": document.get("summary"),
-                "ai_confidence": document.get("confidence"),
-            },
-        )
+async def resolve_financial_method(user_id: str, method_name: str) -> dict:
+    """Devolve o método de pagamento pedido, criando-o se o usuário não tiver."""
+    target = normalize_method_name(method_name)
 
+    async def find_method() -> Optional[dict]:
         methods = await db.financial_methods.find(
             {"user_id": user_id}, {"_id": 0}
-        ).to_list(100)
-        method = next(
+        ).to_list(200)
+        return next(
             (
-                m
-                for m in methods
-                if normalize_method_name(m.get("name", "")) == "crédito a vista"
+                method
+                for method in methods
+                if normalize_method_name(method.get("name", "")) == target
             ),
             None,
         )
-        if not method:
-            await ensure_default_financial_methods(user_id)
-            methods = await db.financial_methods.find(
-                {"user_id": user_id}, {"_id": 0}
-            ).to_list(100)
-            method = next(
-                (
-                    m
-                    for m in methods
-                    if normalize_method_name(m.get("name", "")) == "crédito a vista"
-                ),
-                None,
+
+    method = await find_method()
+    if method:
+        return method
+
+    await ensure_default_financial_methods(user_id)
+    method = await find_method()
+    if method:
+        return method
+
+    # O nome não está entre os padrões (ou o usuário apagou o dele): cria
+    # seguindo o mesmo formato de ensure_default_financial_methods.
+    method_doc = {
+        "method_id": f"method_{uuid.uuid4().hex[:12]}",
+        "user_id": user_id,
+        "name": method_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.financial_methods.insert_one(method_doc)
+    return method_doc
+
+
+def build_single_charge_expense_name(document: dict) -> str:
+    """ "Conta de luz CPFL - 2026-07": o nome do gasto de uma cobrança única."""
+    doc_type = normalize_doc_type(document.get("doc_type"))
+    label = DOC_TYPE_LABELS.get(doc_type, "Documento")
+    issuer = (document.get("issuer") or "").strip()
+    period = (document.get("period") or "").strip()
+
+    name = f"{label} {issuer}".strip() if issuer else label
+    return f"{name} - {period}" if period else name
+
+
+def build_invoice_draft(document: dict, reconciliation: dict, raw_text: str) -> dict:
+    """Monta o rascunho: o que este documento vira se o usuário aprovar.
+
+    Nada é gravado aqui — nem categoria, nem gasto. O documento fica segurado
+    como rascunho e só a aprovação materializa.
+    """
+    regime = document_regime(document)
+    doc_type = normalize_doc_type(document.get("doc_type"))
+    issuer = document.get("issuer")
+    anchor_total = reconciliation["anchor_total"]
+
+    if regime == REGIME_CARD:
+        suffix = detect_card_suffix(raw_text)
+        bank = issuer or "Cartão"
+        plan = [
+            {"name": item["description"], "amount": item["amount"]}
+            for item in reconciliation["purchase_items"]
+        ]
+        draft = {
+            "regime": REGIME_CARD,
+            "card_suffix": suffix,
+            "bank_name": bank,
+            "category_name": f"{bank} final {suffix}",
+            "method_name": INVOICE_CARD_METHOD_NAME,
+            "subcategory": INVOICE_CARD_SUBCATEGORY,
+            "expense_plan": plan,
+            "amount_total": reconciliation["purchase_total"],
+        }
+    else:
+        # Cobrança única: um valor a pagar vira UM gasto, na categoria que a IA
+        # sugeriu. Nada de "final XXXX" fora de cartão.
+        category = document.get("suggested_category") or default_category_for_doc_type(
+            doc_type, issuer
+        )
+        plan = (
+            [
+                {
+                    "name": build_single_charge_expense_name(document),
+                    "amount": anchor_total,
+                }
+            ]
+            if anchor_total is not None
+            else []
+        )
+        draft = {
+            "regime": REGIME_SINGLE_CHARGE,
+            "card_suffix": None,
+            "bank_name": None,
+            "category_name": normalize_category_name(category),
+            "method_name": INVOICE_BILL_METHOD_NAME,
+            "subcategory": doc_type.replace("_", "-"),
+            "expense_plan": plan,
+            "amount_total": anchor_total,
+        }
+
+    reconciled = reconciliation["status"] in RECONCILED_STATUSES
+    draft.update(
+        {
+            "doc_type": doc_type,
+            "issuer": issuer,
+            "suggested_category": document.get("suggested_category"),
+            "period": document.get("period"),
+            "due_date": document.get("due_date"),
+            "totals": document.get("totals"),
+            "ai_summary": document.get("summary"),
+            "ai_confidence": document.get("confidence"),
+            "reconciliation_status": reconciliation["status"],
+            "reconciliation_anchor_label": reconciliation["anchor_label"],
+            "reconciled": reconciled,
+            "review_warning": (
+                None if reconciled else invoice_gate_message(reconciliation)
+            ),
+            "expected_total": anchor_total,
+            "parsed_total": reconciliation["purchase_total"],
+            "parsed_count": len(reconciliation["purchase_items"]),
+            "non_purchase_count": len(reconciliation["charge_items"]),
+            "non_purchase_total": reconciliation["charge_total"],
+        }
+    )
+    return draft
+
+
+def invoice_gate_message(reconciliation: dict) -> str:
+    """A frase que explica por que a conferência aritmética não fechou."""
+    regime = reconciliation.get("regime")
+    status = reconciliation.get("status")
+    parsed_total = reconciliation.get("purchase_total") or 0.0
+    anchor_total = reconciliation.get("anchor_total")
+
+    if status == "no_anchor":
+        if regime == REGIME_CARD:
+            return (
+                "A IA não identificou o total de compras da fatura para conferir "
+                "a soma dos lançamentos."
             )
-        if not method:
-            raise ValueError("Método padrão de cartão não encontrado")
+        return (
+            "A IA não identificou o valor a pagar do documento para conferir a "
+            "soma dos componentes."
+        )
+
+    if regime == REGIME_CARD:
+        return (
+            f"A soma dos lançamentos ({parsed_total:.2f}) não bate com o total de "
+            f"compras da fatura ({(anchor_total or 0.0):.2f})."
+        )
+    return (
+        f"A soma dos componentes ({parsed_total:.2f}) não bate com o valor a pagar "
+        f"do documento ({(anchor_total or 0.0):.2f})."
+    )
+
+
+async def analyze_invoice_document(
+    job_id: str, user_id: str, pdf_bytes: Optional[bytes] = None
+):
+    """Lê o documento e o deixa como rascunho aguardando revisão do usuário.
+
+    Nenhum gasto é gravado aqui: a materialização acontece na aprovação. Uma
+    conciliação que não fecha também para em ``aguardando_revisao``, sinalizada,
+    para o usuário contestar ou rejeitar — nunca em ``expenses``.
+    """
+    document_record = await db.invoice_reader_jobs.find_one(
+        {"job_id": job_id, "user_id": user_id}, {"_id": 0}
+    )
+    if not document_record:
+        return
+
+    await _set_invoice_job(
+        job_id,
+        {
+            "status": INVOICE_STATUS_ANALYZING,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "errors": [],
+        },
+        user_id,
+    )
+
+    try:
+        raw_text = document_record.get("raw_text") or ""
+        if pdf_bytes:
+            extracted = await asyncio.to_thread(extract_pdf_text, pdf_bytes)
+            raw_text = (extracted or "")[:INVOICE_RAW_TEXT_MAX_CHARS]
+            await _set_invoice_job(job_id, {"raw_text": raw_text}, user_id)
+
+        feedback = [
+            entry.get("message") for entry in document_record.get("contestations") or []
+        ]
+        document = await asyncio.to_thread(
+            lambda: extract_invoice_document(raw_text, feedback=feedback)
+        )
+        if not document:
+            raise ValueError(
+                "A IA não conseguiu ler o documento. Adicione os gastos manualmente."
+            )
 
         reconciliation = reconcile_invoice_document(document)
-        items = reconciliation["purchase_items"]
-        expected_total = reconciliation["anchor_total"]
-        parsed_total = reconciliation["purchase_total"]
+        draft = build_invoice_draft(document, reconciliation, raw_text)
 
+        # Mesmo quando a conciliação não fecha o documento vai para revisão,
+        # sinalizado: quem barra a materialização é o portão da aprovação, e o
+        # usuário precisa poder contestar a leitura em vez de recomeçar.
         await _set_invoice_job(
             job_id,
-            {
-                "parsed_count": len(items),
-                "parsed_total": parsed_total,
-                "expected_total": expected_total,
-                "reconciliation_status": reconciliation["status"],
-                "reconciliation_anchor_label": reconciliation["anchor_label"],
-                "non_purchase_count": len(reconciliation["charge_items"]),
-                "non_purchase_total": reconciliation["charge_total"],
-            },
-        )
-
-        if not items:
-            raise ValueError(
-                "A IA não conseguiu identificar lançamentos da fatura. Adicione os gastos manualmente."
-            )
-
-        # A conferência aritmética nunca é pulada: sem uma âncora de
-        # conciliação não há como confirmar a leitura, e o job falha em vez de
-        # gravar gastos sem conferência.
-        if reconciliation["status"] == "no_anchor":
-            raise ValueError(
-                "A IA não identificou o total de compras da fatura para conferir a soma dos lançamentos. Adicione os gastos manualmente."
-            )
-
-        if reconciliation["status"] == "mismatch":
-            raise ValueError(
-                f"A IA não conseguiu conciliar a soma dos lançamentos ({parsed_total:.2f}) com o total da fatura ({expected_total:.2f}). Adicione os gastos manualmente."
-            )
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        for item in items:
-            expense_doc = {
-                "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "name": item["description"],
-                "amount": item["amount"],
-                "method_id": method["method_id"],
-                "category": category_name,
-                "subcategory": "fatura-cartao",
-                "month": requested_month,
-                "created_at": now_iso,
-            }
-            await db.expenses.insert_one(expense_doc)
-            created_ids.append(expense_doc["expense_id"])
-
-        await _set_invoice_job(
-            job_id,
-            {
-                "status": "completed",
-                "created_expense_ids": created_ids,
-                "errors": [],
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            },
+            {**draft, "status": INVOICE_STATUS_AWAITING_REVIEW, "errors": []},
+            user_id,
         )
     except Exception as exc:
-        errors.append(str(exc))
         await _set_invoice_job(
             job_id,
             {
-                "status": "failed",
-                "errors": errors,
-                "created_expense_ids": created_ids,
+                "status": INVOICE_STATUS_FAILED,
+                "errors": [str(exc)],
                 "finished_at": datetime.now(timezone.utc).isoformat(),
             },
+            user_id,
         )
+
+
+async def materialize_invoice_document(user_id: str, document_record: dict) -> dict:
+    """Grava o rascunho aprovado em ``expenses``, no formato do tipo do documento.
+
+    Cartão vira N gastos, um por lançamento; cobrança única vira UM gasto no
+    valor a pagar. Só é chamada depois do portão de conciliação.
+    """
+    category_name = await ensure_expense_category(
+        user_id, document_record.get("category_name") or "Outros"
+    )
+    method = await resolve_financial_method(
+        user_id, document_record.get("method_name") or INVOICE_BILL_METHOD_NAME
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    created_ids = []
+    for entry in document_record.get("expense_plan") or []:
+        expense_doc = {
+            "expense_id": f"exp_{uuid.uuid4().hex[:12]}",
+            "user_id": user_id,
+            "name": entry["name"],
+            "amount": entry["amount"],
+            "method_id": method["method_id"],
+            "category": category_name,
+            "subcategory": document_record.get("subcategory"),
+            "month": document_record.get("requested_month"),
+            "created_at": now_iso,
+        }
+        await db.expenses.insert_one(expense_doc)
+        created_ids.append(expense_doc["expense_id"])
+
+    return {"created_expense_ids": created_ids, "category_name": category_name}
 
 
 # ============ FINANCIAL ENDPOINTS ============
@@ -1937,60 +2182,125 @@ async def get_summary(
     }
 
 
-@api_router.post("/finance/invoice-reader/jobs", status_code=202)
-async def create_invoice_reader_job(
-    requested_month: str = Form(...),
-    file: UploadFile = File(...),
-    session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None),
-):
-    user = await get_current_user(session_token, authorization)
-
-    if not re.match(r"^\d{4}-\d{2}$", requested_month or ""):
-        raise HTTPException(status_code=400, detail="Mês inválido. Use YYYY-MM")
-
-    if (file.content_type or "").lower() not in {
-        "application/pdf",
-        "application/x-pdf",
-    } and not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos")
-
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
-        raise HTTPException(status_code=400, detail="Arquivo PDF vazio")
-
+def build_invoice_document_record(
+    user_id: str, batch_id: str, requested_month: str, filename: str
+) -> dict:
     now_iso = datetime.now(timezone.utc).isoformat()
-    job = {
+    return {
         "job_id": f"invjob_{uuid.uuid4().hex[:12]}",
-        "user_id": user.user_id,
-        "status": "queued",
-        "source_type": "credit_card_pdf",
-        "filename": file.filename or "fatura.pdf",
+        "batch_id": batch_id,
+        "user_id": user_id,
+        "status": INVOICE_STATUS_ANALYZING,
+        "source_type": "documento_pdf",
+        "filename": filename,
         "requested_month": requested_month,
+        "doc_type": None,
+        "regime": None,
+        "issuer": None,
         "bank_name": None,
         "card_suffix": None,
+        "suggested_category": None,
         "category_name": None,
+        "method_name": None,
+        "subcategory": None,
+        "period": None,
+        "due_date": None,
+        "ai_summary": None,
+        "ai_confidence": None,
+        "reconciliation_status": None,
+        "reconciliation_anchor_label": None,
+        "reconciled": False,
+        "review_warning": None,
         "expected_total": None,
         "parsed_total": None,
         "parsed_count": 0,
-        "reconciliation_status": None,
-        "reconciliation_anchor_label": None,
-        "ai_summary": None,
-        "ai_confidence": None,
+        "amount_total": None,
+        "expense_plan": [],
+        "contestations": [],
+        "attempts": 0,
         "created_expense_ids": [],
         "errors": [],
+        "raw_text": "",
         "started_at": None,
         "finished_at": None,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
-    await db.invoice_reader_jobs.insert_one(job)
-    asyncio.create_task(
-        process_invoice_reader_job(
-            job["job_id"], user.user_id, requested_month, job["filename"], pdf_bytes
+
+
+@api_router.post("/finance/invoice-reader/jobs", status_code=202)
+async def create_invoice_reader_job(
+    requested_month: str = Form(...),
+    files: List[UploadFile] = File(default_factory=list),
+    file: Optional[UploadFile] = File(None),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Recebe uma pasta de contas: N PDFs viram um lote de N documentos."""
+    user = await get_current_user(session_token, authorization)
+
+    if not re.match(r"^\d{4}-\d{2}$", requested_month or ""):
+        raise HTTPException(status_code=400, detail="Mês inválido. Use YYYY-MM")
+
+    candidates = list(files) if isinstance(files, list) else []
+    candidates.append(file)
+    uploads = [upload for upload in candidates if getattr(upload, "filename", None)]
+    if not uploads:
+        raise HTTPException(status_code=400, detail="Anexe ao menos um arquivo PDF")
+
+    # Valida o lote inteiro antes de criar qualquer documento: ou entra tudo,
+    # ou o usuário corrige o anexo errado e reenvia.
+    prepared = []
+    for upload in uploads:
+        filename = upload.filename or "documento.pdf"
+        is_pdf = (upload.content_type or "").lower() in {
+            "application/pdf",
+            "application/x-pdf",
+        } or filename.lower().endswith(".pdf")
+        if not is_pdf:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Apenas arquivos PDF são aceitos: {filename}",
+            )
+
+        pdf_bytes = await upload.read()
+        if not pdf_bytes:
+            raise HTTPException(
+                status_code=400, detail=f"Arquivo PDF vazio: {filename}"
+            )
+        prepared.append((filename, pdf_bytes))
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    batch_id = f"invlote_{uuid.uuid4().hex[:12]}"
+
+    documents = []
+    for filename, pdf_bytes in prepared:
+        record = build_invoice_document_record(
+            user.user_id, batch_id, requested_month, filename
         )
+        await db.invoice_reader_jobs.insert_one(record)
+        documents.append((record, pdf_bytes))
+
+    await db.invoice_reader_batches.insert_one(
+        {
+            "batch_id": batch_id,
+            "user_id": user.user_id,
+            "requested_month": requested_month,
+            "document_ids": [record["job_id"] for record, _ in documents],
+            "created_at": now_iso,
+        }
     )
-    return sanitize_mongo_document(job)
+
+    for record, pdf_bytes in documents:
+        asyncio.create_task(
+            analyze_invoice_document(record["job_id"], user.user_id, pdf_bytes)
+        )
+
+    return {
+        "batch_id": batch_id,
+        "requested_month": requested_month,
+        "documents": [public_invoice_document(record) for record, _ in documents],
+    }
 
 
 @api_router.get("/finance/invoice-reader/jobs")
@@ -2001,33 +2311,185 @@ async def get_invoice_reader_jobs(
 ):
     user = await get_current_user(session_token, authorization)
     await cleanup_expired_invoice_jobs(user.user_id)
-    jobs = await db.invoice_reader_jobs.find(
-        {"user_id": user.user_id}, {"_id": 0}
+    documents = await db.invoice_reader_jobs.find(
+        {"user_id": user.user_id}, {"_id": 0, "raw_text": 0}
     ).to_list(limit)
-    jobs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-    return jobs[:limit]
+    documents.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return [public_invoice_document(document) for document in documents[:limit]]
 
-    habits = []
-    for i, h in enumerate(default_habits):
-        habit = {
-            "habit_id": f"habit_{uuid.uuid4().hex[:12]}",
-            "user_id": user.user_id,
-            "name": h["name"],
-            "color": h["color"],
-            "icon": h["icon"],
-            "start_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "end_date": (datetime.now(timezone.utc) + timedelta(days=30)).strftime(
-                "%Y-%m-%d"
+
+async def get_owned_invoice_document(job_id: str, user_id: str) -> dict:
+    """Carrega o documento do usuário. Documento de outro usuário não existe."""
+    document = await db.invoice_reader_jobs.find_one(
+        {"job_id": job_id, "user_id": user_id}, {"_id": 0}
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+    return document
+
+
+@api_router.post("/finance/invoice-reader/jobs/{job_id}/approve")
+async def approve_invoice_reader_document(
+    job_id: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+    document = await get_owned_invoice_document(job_id, user.user_id)
+
+    # Aprovar duas vezes não duplica gasto: a segunda chamada só devolve o
+    # documento já aprovado.
+    if document.get("status") == INVOICE_STATUS_APPROVED:
+        return public_invoice_document(document)
+
+    if document.get("status") != INVOICE_STATUS_AWAITING_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail="Este documento não está aguardando revisão.",
+        )
+
+    # O portão: nada vira gasto sem conferência aritmética, em nenhum tipo de
+    # documento.
+    if document.get("reconciliation_status") not in RECONCILED_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{document.get('review_warning') or 'A conferência da leitura não fechou.'} "
+                "Conteste a leitura ou adicione os gastos manualmente."
             ),
-            "frequency": "daily",
-            "order": i,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        habits.append(habit)
+        )
 
-    await db.habits.insert_many(habits)
+    if not document.get("expense_plan"):
+        raise HTTPException(
+            status_code=409,
+            detail="Não há nada para lançar neste documento.",
+        )
 
-    return {"message": f"Created {len(habits)} default habits"}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    claimed = await db.invoice_reader_jobs.update_one(
+        {
+            "job_id": job_id,
+            "user_id": user.user_id,
+            "status": INVOICE_STATUS_AWAITING_REVIEW,
+        },
+        {
+            "$set": {
+                "status": INVOICE_STATUS_APPROVED,
+                "finished_at": now_iso,
+                "updated_at": now_iso,
+            }
+        },
+    )
+    if not claimed.matched_count:
+        # Outra chamada aprovou primeiro; devolve o resultado dela.
+        return public_invoice_document(
+            await get_owned_invoice_document(job_id, user.user_id)
+        )
+
+    try:
+        result = await materialize_invoice_document(user.user_id, document)
+    except Exception as exc:
+        await _set_invoice_job(
+            job_id,
+            {
+                "status": INVOICE_STATUS_AWAITING_REVIEW,
+                "finished_at": None,
+                "errors": [str(exc)],
+            },
+            user.user_id,
+        )
+        raise HTTPException(
+            status_code=500, detail="Não foi possível lançar os gastos deste documento."
+        )
+
+    await _set_invoice_job(job_id, {**result, "errors": []}, user.user_id)
+    return public_invoice_document(
+        await get_owned_invoice_document(job_id, user.user_id)
+    )
+
+
+@api_router.post("/finance/invoice-reader/jobs/{job_id}/contest")
+async def contest_invoice_reader_document(
+    job_id: str,
+    payload: InvoiceContestRequest,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+    document = await get_owned_invoice_document(job_id, user.user_id)
+
+    message = (payload.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Escreva o que está errado.")
+
+    if document.get("status") == INVOICE_STATUS_APPROVED:
+        raise HTTPException(
+            status_code=409,
+            detail="Este documento já foi aprovado. Edite os gastos lançados.",
+        )
+    if document.get("status") == INVOICE_STATUS_REJECTED:
+        raise HTTPException(status_code=409, detail="Este documento foi rejeitado.")
+    if document.get("status") in {INVOICE_STATUS_ANALYZING, INVOICE_STATUS_CONTESTED}:
+        raise HTTPException(
+            status_code=409, detail="Este documento já está sendo reanalisado."
+        )
+
+    contestations = list(document.get("contestations") or [])
+    if len(contestations) >= INVOICE_MAX_CONTESTATIONS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Limite de {INVOICE_MAX_CONTESTATIONS} contestações atingido para "
+                "este documento. Rejeite e adicione os gastos manualmente."
+            ),
+        )
+
+    contestations.append(
+        {"message": message, "created_at": datetime.now(timezone.utc).isoformat()}
+    )
+    await _set_invoice_job(
+        job_id,
+        {
+            "status": INVOICE_STATUS_CONTESTED,
+            "contestations": contestations,
+            "attempts": len(contestations),
+            "finished_at": None,
+        },
+        user.user_id,
+    )
+
+    asyncio.create_task(analyze_invoice_document(job_id, user.user_id))
+    return public_invoice_document(
+        await get_owned_invoice_document(job_id, user.user_id)
+    )
+
+
+@api_router.post("/finance/invoice-reader/jobs/{job_id}/reject")
+async def reject_invoice_reader_document(
+    job_id: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+    document = await get_owned_invoice_document(job_id, user.user_id)
+
+    if document.get("status") == INVOICE_STATUS_APPROVED:
+        raise HTTPException(
+            status_code=409,
+            detail="Este documento já foi aprovado. Apague os gastos lançados.",
+        )
+
+    await _set_invoice_job(
+        job_id,
+        {
+            "status": INVOICE_STATUS_REJECTED,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        },
+        user.user_id,
+    )
+    return public_invoice_document(
+        await get_owned_invoice_document(job_id, user.user_id)
+    )
 
 
 # ============ COMPLETIONS ENDPOINTS ============
@@ -2544,6 +3006,9 @@ async def create_database_indexes():
     await db.financial_methods.create_index([("user_id", 1), ("name", 1)])
     await db.invoice_reader_jobs.create_index([("user_id", 1), ("created_at", -1)])
     await db.invoice_reader_jobs.create_index([("job_id", 1)], unique=True)
+    await db.invoice_reader_jobs.create_index([("user_id", 1), ("batch_id", 1)])
+    await db.invoice_reader_batches.create_index([("user_id", 1), ("created_at", -1)])
+    await db.invoice_reader_batches.create_index([("batch_id", 1)], unique=True)
     await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
     await db.notifications.create_index(
         [("user_id", 1), ("dedupe_key", 1)], unique=True

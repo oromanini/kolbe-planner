@@ -51,6 +51,8 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+# virtualenvs descartáveis (.venv-rev, .venv-diag, ...)
+.venv-*/
 
 # Development tools
 chainlit.md

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
@@ -17,6 +17,11 @@ import {
   FileText,
   Camera,
   Loader2,
+  UploadCloud,
+  Check,
+  X,
+  MessageSquareWarning,
+  AlertTriangle,
 } from "lucide-react";
 import {
   PieChart,
@@ -33,6 +38,17 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { apiRequest, checkApiHealth } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import NotificationBell from "../components/NotificationBell";
 
 const formatCurrencyInput = (value) => {
@@ -50,6 +66,30 @@ const parseCurrencyInput = (value) => {
 const formatCurrency = (value) => `R$ ${Number(value || 0).toFixed(2)}`;
 
 const ITEMS_PER_PAGE = 12;
+
+// Enquanto houver documento nestes estados a lista continua sendo consultada.
+const INVOICE_PENDING_STATUSES = ["analisando", "contestado"];
+
+const INVOICE_STATUS_LABELS = {
+  analisando: "analisando",
+  aguardando_revisao: "aguardando revisão",
+  aprovado: "aprovado",
+  contestado: "reanalisando",
+  rejeitado: "rejeitado",
+  falhou: "não foi possível ler",
+};
+
+const INVOICE_STATUS_STYLES = {
+  analisando: "bg-amber-500/20 text-amber-300",
+  contestado: "bg-amber-500/20 text-amber-300",
+  aguardando_revisao: "bg-primary/20 text-primary",
+  aprovado: "bg-emerald-500/20 text-emerald-300",
+  rejeitado: "bg-white/10 text-slate-300",
+  falhou: "bg-secondary/20 text-secondary",
+};
+
+const isPdfFile = (file) =>
+  file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
 const getErrorMessage = (error, fallback) => {
   if (error?.name === "TypeError") {
@@ -91,10 +131,16 @@ export default function FinancialPlanner() {
   const [incomePage, setIncomePage] = useState(1);
   const [categoryPage, setCategoryPage] = useState(1);
   const [activeFinanceTab, setActiveFinanceTab] = useState("lancamentos");
-  const [invoiceReaderJobs, setInvoiceReaderJobs] = useState([]);
-  const [invoiceReaderFile, setInvoiceReaderFile] = useState(null);
+  const [invoiceDocuments, setInvoiceDocuments] = useState([]);
+  const [invoiceFiles, setInvoiceFiles] = useState([]);
+  const [isDraggingInvoiceFiles, setIsDraggingInvoiceFiles] = useState(false);
   const [isSubmittingInvoiceJob, setIsSubmittingInvoiceJob] = useState(false);
+  const [invoiceDocumentInAction, setInvoiceDocumentInAction] = useState(null);
+  const [contestTarget, setContestTarget] = useState(null);
+  const [contestMessage, setContestMessage] = useState("");
+  const [isSubmittingContest, setIsSubmittingContest] = useState(false);
   const [selectedCategoryName, setSelectedCategoryName] = useState(null);
+  const invoiceFileInputRef = useRef(null);
 
   useEffect(() => {
     loadData();
@@ -118,15 +164,29 @@ export default function FinancialPlanner() {
     setCategoryPage((prev) => Math.min(prev, Math.max(1, Math.ceil(categories.length / ITEMS_PER_PAGE))));
   }, [categories.length]);
 
+  const hasInvoiceDocumentsInAnalysis = useMemo(
+    () => invoiceDocuments.some((doc) => INVOICE_PENDING_STATUSES.includes(doc.status)),
+    [invoiceDocuments],
+  );
+
   useEffect(() => {
     if (activeFinanceTab !== "leitor") {
       return undefined;
     }
 
-    loadInvoiceReaderJobs();
-    const interval = setInterval(loadInvoiceReaderJobs, 3000);
-    return () => clearInterval(interval);
+    loadInvoiceDocuments();
+    return undefined;
   }, [activeFinanceTab]);
+
+  useEffect(() => {
+    // Só faz sentido consultar enquanto houver documento em análise.
+    if (activeFinanceTab !== "leitor" || !hasInvoiceDocumentsInAnalysis) {
+      return undefined;
+    }
+
+    const interval = setInterval(loadInvoiceDocuments, 3000);
+    return () => clearInterval(interval);
+  }, [activeFinanceTab, hasInvoiceDocumentsInAnalysis]);
 
   const loadData = async () => {
     setIsLoadingFinanceData(true);
@@ -236,28 +296,46 @@ export default function FinancialPlanner() {
     }
   };
 
-  const loadInvoiceReaderJobs = async () => {
+  const loadInvoiceDocuments = async () => {
     try {
       const response = await apiRequest(`/finance/invoice-reader/jobs?limit=30`);
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
-        throw new Error(errorPayload?.detail || "Erro ao carregar jobs");
+        throw new Error(errorPayload?.detail || "Erro ao carregar documentos");
       }
       const data = await response.json();
-      setInvoiceReaderJobs(data);
+      setInvoiceDocuments(data);
     } catch (_error) {
       // silent polling errors
     }
   };
 
-  const handleCreateInvoiceJob = async (e) => {
-    e.preventDefault();
-    if (!invoiceReaderFile || isSubmittingInvoiceJob) {
+  const handleSelectInvoiceFiles = (fileList) => {
+    const selected = Array.from(fileList || []);
+    if (selected.length === 0) {
       return;
     }
 
-    if (invoiceReaderFile.type !== "application/pdf" && !invoiceReaderFile.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("Apenas PDF é aceito por enquanto.");
+    const pdfs = selected.filter(isPdfFile);
+    const rejected = selected.length - pdfs.length;
+    if (rejected > 0) {
+      toast.error(rejected === 1 ? "Um arquivo foi ignorado: só aceitamos PDF." : `${rejected} arquivos foram ignorados: só aceitamos PDF.`);
+    }
+
+    setInvoiceFiles((previous) => {
+      const known = new Set(previous.map((file) => `${file.name}:${file.size}`));
+      const additions = pdfs.filter((file) => !known.has(`${file.name}:${file.size}`));
+      return [...previous, ...additions];
+    });
+  };
+
+  const handleRemoveInvoiceFile = (index) => {
+    setInvoiceFiles((previous) => previous.filter((_file, position) => position !== index));
+  };
+
+  const handleCreateInvoiceJob = async (e) => {
+    e.preventDefault();
+    if (invoiceFiles.length === 0 || isSubmittingInvoiceJob) {
       return;
     }
 
@@ -265,7 +343,7 @@ export default function FinancialPlanner() {
     try {
       const formData = new FormData();
       formData.append("requested_month", currentMonth);
-      formData.append("file", invoiceReaderFile);
+      invoiceFiles.forEach((file) => formData.append("files", file));
 
       const response = await apiRequest(`/finance/invoice-reader/jobs`, {
         method: "POST",
@@ -277,14 +355,79 @@ export default function FinancialPlanner() {
         throw new Error(errorPayload?.detail || "Erro ao iniciar leitura");
       }
 
-      toast.success("Leitura da fatura iniciada em background.");
-      setInvoiceReaderFile(null);
-      await loadInvoiceReaderJobs();
-      loadData();
+      toast.success(
+        invoiceFiles.length === 1
+          ? "Documento enviado. A IA vai analisar e trazer um parecer."
+          : `${invoiceFiles.length} documentos enviados. A IA vai analisar e trazer um parecer de cada um.`,
+      );
+      setInvoiceFiles([]);
+      if (invoiceFileInputRef.current) {
+        invoiceFileInputRef.current.value = "";
+      }
+      await loadInvoiceDocuments();
     } catch (error) {
-      toast.error(getErrorMessage(error, "Erro ao iniciar leitura da fatura"));
+      toast.error(getErrorMessage(error, "Erro ao enviar os documentos"));
     } finally {
       setIsSubmittingInvoiceJob(false);
+    }
+  };
+
+  const handleInvoiceDocumentAction = async (doc, action, body) => {
+    if (invoiceDocumentInAction) {
+      return false;
+    }
+
+    setInvoiceDocumentInAction(doc.job_id);
+    try {
+      const response = await apiRequest(`/finance/invoice-reader/jobs/${doc.job_id}/${action}`, {
+        method: "POST",
+        ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Não foi possível concluir a ação");
+      }
+
+      await loadInvoiceDocuments();
+      return true;
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Não foi possível concluir a ação"));
+      return false;
+    } finally {
+      setInvoiceDocumentInAction(null);
+    }
+  };
+
+  const handleApproveInvoiceDocument = async (doc) => {
+    const approved = await handleInvoiceDocumentAction(doc, "approve");
+    if (approved) {
+      toast.success("Documento aprovado e lançado nos gastos.");
+      loadData();
+    }
+  };
+
+  const handleRejectInvoiceDocument = async (doc) => {
+    const rejected = await handleInvoiceDocumentAction(doc, "reject");
+    if (rejected) {
+      toast.success("Documento descartado. Nada foi lançado.");
+    }
+  };
+
+  const handleSubmitContest = async (e) => {
+    e.preventDefault();
+    if (!contestTarget || isSubmittingContest || !contestMessage.trim()) {
+      return;
+    }
+
+    setIsSubmittingContest(true);
+    const contested = await handleInvoiceDocumentAction(contestTarget, "contest", { message: contestMessage.trim() });
+    setIsSubmittingContest(false);
+
+    if (contested) {
+      toast.success("Contestação enviada. A IA vai reler o documento.");
+      setContestTarget(null);
+      setContestMessage("");
     }
   };
 
@@ -1202,70 +1345,239 @@ export default function FinancialPlanner() {
             <div className="glass-card p-6">
               <h2 className="font-heading text-2xl font-medium text-white mb-2">Leitor de contas</h2>
               <p className="inline-flex items-center gap-2 rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-200 mb-4">
-                Beta: a IA pode errar a leitura. Sempre revise os lançamentos antes de confirmar.
+                Beta: a IA pode errar a leitura. Sempre revise o parecer antes de aprovar.
               </p>
-              <p className="text-slate-300 mb-6">O que deseja fazer?</p>
-              <div className="flex flex-wrap gap-3">
-                <button className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white">
-                  <FileText className="w-4 h-4" />
-                  Ler fatura de cartão
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-slate-300 opacity-80 cursor-not-allowed"
-                >
-                  <Camera className="w-4 h-4" />
-                  Ler cupom fiscal <span className="text-[10px] uppercase tracking-wide text-amber-300">em breve</span>
-                </button>
-              </div>
+              <p className="text-slate-300 mb-6">
+                Solte aqui suas faturas de cartão, contas de luz, água, condomínio, internet ou boletos. A IA analisa cada
+                documento, emite um parecer e você só aprova ou contesta.
+              </p>
 
-              <form onSubmit={handleCreateInvoiceJob} className="mt-6 space-y-3">
-                <label className="block text-sm text-slate-300">Anexe a fatura (somente PDF)</label>
-                <input
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(e) => setInvoiceReaderFile(e.target.files?.[0] || null)}
-                  className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-full file:border-0 file:bg-primary/15 file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary"
-                />
-                <button
-                  type="submit"
-                  disabled={!invoiceReaderFile || isSubmittingInvoiceJob}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-white disabled:opacity-50"
+              <form onSubmit={handleCreateInvoiceJob} className="space-y-4">
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingInvoiceFiles(true);
+                  }}
+                  onDragLeave={() => setIsDraggingInvoiceFiles(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDraggingInvoiceFiles(false);
+                    handleSelectInvoiceFiles(e.dataTransfer?.files);
+                  }}
+                  className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${
+                    isDraggingInvoiceFiles ? "border-primary bg-primary/10" : "border-white/15 bg-slate-950/30"
+                  }`}
                 >
-                  {isSubmittingInvoiceJob ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                  Iniciar leitura em background
-                </button>
+                  <UploadCloud className="w-8 h-8 mx-auto text-primary mb-3" />
+                  <p className="text-white font-medium">Anexe suas faturas aqui</p>
+                  <p className="text-sm text-slate-400 mt-1">Arraste e solte quantos PDFs quiser, ou escolha os arquivos.</p>
+                  <input
+                    ref={invoiceFileInputRef}
+                    type="file"
+                    multiple
+                    accept="application/pdf,.pdf"
+                    onChange={(e) => handleSelectInvoiceFiles(e.target.files)}
+                    className="hidden"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-4 border-white/20 text-slate-200 hover:bg-white/10"
+                    onClick={() => invoiceFileInputRef.current?.click()}
+                  >
+                    <FileText className="w-4 h-4" />
+                    Anexar faturas
+                  </Button>
+                </div>
+
+                {invoiceFiles.length > 0 && (
+                  <div className="space-y-2">
+                    {invoiceFiles.map((file, index) => (
+                      <div
+                        key={`${file.name}-${file.size}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2"
+                      >
+                        <span className="text-sm text-slate-200 truncate">{file.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveInvoiceFile(index)}
+                          className="text-slate-400 hover:text-white transition-colors"
+                          aria-label={`Remover ${file.name}`}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button type="submit" disabled={invoiceFiles.length === 0 || isSubmittingInvoiceJob}>
+                    {isSubmittingInvoiceJob ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                    {invoiceFiles.length > 1 ? `Analisar ${invoiceFiles.length} documentos` : "Analisar documento"}
+                  </Button>
+                  <span className="text-xs text-slate-400">Os gastos entram na competência {currentMonth}.</span>
+                  <span className="inline-flex items-center gap-2 text-xs text-slate-500">
+                    <Camera className="w-4 h-4" />
+                    Ler cupom fiscal <span className="uppercase tracking-wide text-amber-300">em breve</span>
+                  </span>
+                </div>
               </form>
             </div>
 
             <div className="glass-card p-6">
-              <h3 className="font-heading text-xl text-white mb-4">Jobs em background</h3>
-              {invoiceReaderJobs.length === 0 ? (
-                <p className="text-slate-400">Nenhum job enviado ainda.</p>
+              <h3 className="font-heading text-xl text-white mb-4">Documentos para revisar</h3>
+              {invoiceDocuments.length === 0 ? (
+                <p className="text-slate-400">Nenhum documento enviado ainda.</p>
               ) : (
                 <div className="space-y-3">
-                  {invoiceReaderJobs.map((job) => (
-                    <div key={job.job_id} className="rounded-xl border border-white/10 p-4 bg-slate-950/40">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-white text-sm font-medium">{job.filename}</p>
-                        <span className={`text-xs px-2 py-1 rounded-full ${job.status === "completed" ? "bg-emerald-500/20 text-emerald-300" : job.status === "failed" ? "bg-secondary/20 text-secondary" : "bg-amber-500/20 text-amber-300"}`}>
-                          {job.status}
-                        </span>
+                  {invoiceDocuments.map((doc) => {
+                    const isPending = INVOICE_PENDING_STATUSES.includes(doc.status);
+                    const isUnderReview = doc.status === "aguardando_revisao";
+                    const isBusy = invoiceDocumentInAction === doc.job_id;
+
+                    return (
+                      <div key={doc.job_id} className="rounded-xl border border-white/10 p-4 bg-slate-950/40">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-white text-sm font-medium flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-slate-400" />
+                            {doc.filename}
+                          </p>
+                          <Badge className={`${INVOICE_STATUS_STYLES[doc.status] || "bg-white/10 text-slate-300"} border-transparent`}>
+                            {INVOICE_STATUS_LABELS[doc.status] || doc.status}
+                          </Badge>
+                        </div>
+
+                        {isPending ? (
+                          <p className="text-sm text-slate-400 mt-3 flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            A IA está lendo este documento...
+                          </p>
+                        ) : (
+                          <>
+                            {doc.ai_summary && <p className="text-sm text-slate-200 mt-3">{doc.ai_summary}</p>}
+                            {typeof doc.amount_total === "number" && (
+                              <p className="text-lg text-white font-medium mt-1">{formatCurrency(doc.amount_total)}</p>
+                            )}
+                            <p className="text-xs text-slate-400 mt-1">
+                              {doc.regime === "fatura_cartao"
+                                ? `Fatura de cartão • ${doc.parsed_count || 0} lançamentos • categoria ${doc.category_name || "a definir"}`
+                                : `Cobrança única • categoria ${doc.category_name || "a definir"}`}
+                            </p>
+                          </>
+                        )}
+
+                        {doc.status === "aprovado" && (
+                          <p className="text-xs text-emerald-300 mt-2">
+                            {doc.created_expense_ids?.length === 1
+                              ? "1 gasto lançado."
+                              : `${doc.created_expense_ids?.length || 0} gastos lançados.`}
+                          </p>
+                        )}
+
+                        {!isPending && doc.reconciled === false && (
+                          <p className="mt-3 flex items-start gap-2 rounded-lg border border-secondary/40 bg-secondary/10 px-3 py-2 text-xs text-secondary">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>
+                              A conferência não fechou: {doc.review_warning || "a soma lida não bate com o total do documento."} Não
+                              aprove sem checar o PDF — conteste dizendo o que está errado.
+                            </span>
+                          </p>
+                        )}
+
+                        {doc.errors?.length > 0 && <p className="text-xs text-secondary mt-2">{doc.errors[0]}</p>}
+
+                        {doc.contestations?.length > 0 && (
+                          <p className="text-xs text-slate-400 mt-2">
+                            Você já contestou {doc.contestations.length}x: “{doc.contestations[doc.contestations.length - 1].message}”
+                          </p>
+                        )}
+
+                        {(isUnderReview || doc.status === "falhou") && (
+                          <div className="flex flex-wrap gap-2 mt-4">
+                            {isUnderReview && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={isBusy || doc.reconciled === false}
+                                onClick={() => handleApproveInvoiceDocument(document)}
+                                className="bg-emerald-600 hover:bg-emerald-600/90 text-white"
+                              >
+                                {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                Aprovar
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={isBusy}
+                              onClick={() => {
+                                setContestTarget(document);
+                                setContestMessage("");
+                              }}
+                              className="border-white/20 text-slate-200 hover:bg-white/10"
+                            >
+                              <MessageSquareWarning className="w-4 h-4" />
+                              Contestar
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              disabled={isBusy}
+                              onClick={() => handleRejectInvoiceDocument(document)}
+                              className="text-slate-400 hover:text-white hover:bg-white/10"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Descartar
+                            </Button>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-400 mt-1">Categoria: {job.category_name || "(aguardando detecção)"}</p>
-                      <p className="text-xs text-slate-400">Lançamentos: {job.parsed_count || 0} • Soma lida: {formatCurrency(job.parsed_total || 0)}</p>
-                      {typeof job.expected_total === "number" && (
-                        <p className="text-xs text-slate-400">Total da fatura detectado: {formatCurrency(job.expected_total)}</p>
-                      )}
-                      {job.errors?.length > 0 && (
-                        <p className="text-xs text-secondary mt-2">Erro: {job.errors[0]}</p>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
+
+            <Dialog
+              open={Boolean(contestTarget)}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setContestTarget(null);
+                  setContestMessage("");
+                }
+              }}
+            >
+              <DialogContent className="bg-slate-950 border-white/10 text-white">
+                <DialogHeader>
+                  <DialogTitle>Contestar a leitura</DialogTitle>
+                  <DialogDescription className="text-slate-400">
+                    {contestTarget?.ai_summary || contestTarget?.filename}
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleSubmitContest} className="space-y-4">
+                  <Textarea
+                    value={contestMessage}
+                    onChange={(e) => setContestMessage(e.target.value)}
+                    placeholder="Ex.: o valor certo é 447,99 / isso é conta de água, não de luz / a categoria devia ser Moradia"
+                    className="min-h-[120px] border-white/10 bg-slate-900 text-white placeholder:text-slate-500"
+                    autoFocus
+                  />
+                  <p className="text-xs text-slate-500">
+                    A IA relê o documento com a sua correção e traz um novo parecer.
+                    {typeof contestTarget?.attempts === "number" && ` Você já contestou ${contestTarget.attempts}x (limite de 3).`}
+                  </p>
+                  <DialogFooter>
+                    <Button type="submit" disabled={!contestMessage.trim() || isSubmittingContest}>
+                      {isSubmittingContest ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquareWarning className="w-4 h-4" />}
+                      Enviar contestação
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
           </div>
         ) : (
           <div className="glass-card p-6">
