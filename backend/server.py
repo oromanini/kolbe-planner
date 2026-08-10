@@ -32,6 +32,7 @@ from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 from io import BytesIO
 import importlib
+import weakref
 
 try:  # pragma: no cover - depende de como o app é iniciado
     from backend.invoice_ai import (  # noqa: F401
@@ -1291,6 +1292,34 @@ INVOICE_MAX_CONTESTATIONS = 3
 # Teto do texto do PDF guardado para reprocessar em caso de contestação.
 INVOICE_RAW_TEXT_MAX_CHARS = 40000
 
+# Quantas leituras podem chamar a Groq ao mesmo tempo. Uma pasta com N contas
+# vira N tasks concorrentes, e o free tier limita tokens por minuto no nível da
+# organização: sem esse teto o lote inteiro bate em 429 de uma vez.
+DEFAULT_INVOICE_AI_MAX_CONCURRENCY = 2
+
+# Um semáforo por event loop: os testes rodam cada caso em um loop novo, e um
+# semáforo criado em outro loop estoura ao bloquear de verdade.
+_invoice_ai_semaphores: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def get_invoice_ai_max_concurrency() -> int:
+    raw_value = (os.getenv("GROQ_INVOICE_MAX_CONCURRENCY") or "").strip()
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+    return value if value > 0 else DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+
+
+def get_invoice_ai_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _invoice_ai_semaphores.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(get_invoice_ai_max_concurrency())
+        _invoice_ai_semaphores[loop] = semaphore
+    return semaphore
+
+
 INVOICE_CARD_METHOD_NAME = "crédito a vista"
 INVOICE_BILL_METHOD_NAME = "boleto"
 INVOICE_CARD_SUBCATEGORY = "fatura-cartao"
@@ -1595,9 +1624,10 @@ async def analyze_invoice_document(
         feedback = [
             entry.get("message") for entry in document_record.get("contestations") or []
         ]
-        document = await asyncio.to_thread(
-            lambda: extract_invoice_document(raw_text, feedback=feedback)
-        )
+        async with get_invoice_ai_semaphore():
+            document = await asyncio.to_thread(
+                lambda: extract_invoice_document(raw_text, feedback=feedback)
+            )
         if not document:
             raise ValueError(
                 "A IA não conseguiu ler o documento. Adicione os gastos manualmente."

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -1266,3 +1267,68 @@ def test_bank_specific_parsers_are_gone():
     ]
 
     assert [name for name in removed if hasattr(server, name)] == []
+
+
+def test_batch_analysis_caps_concurrent_groq_calls(fake_backend, monkeypatch):
+    """Uma pasta com N contas não pode disparar N chamadas de uma vez.
+
+    O free tier da Groq limita tokens por minuto na organização: sem teto, o
+    lote inteiro volta em 429 e o usuário vê metade dos documentos falhando.
+    """
+    import threading
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "2")
+    server._invoice_ai_semaphores.clear()
+
+    lock = threading.Lock()
+    state = {"running": 0, "peak": 0}
+
+    def fake_extract(_raw_text, **_kwargs):
+        with lock:
+            state["running"] += 1
+            state["peak"] = max(state["peak"], state["running"])
+        time.sleep(0.02)
+        with lock:
+            state["running"] -= 1
+        return invoice_ai.normalize_invoice_document(invoices.CONTA_LUZ.ai_document)
+
+    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "conta")
+    monkeypatch.setattr(server, "extract_invoice_document", fake_extract)
+
+    job_ids = [f"doc_lote_{index}" for index in range(6)]
+    for job_id in job_ids:
+        _seed_document(fake_backend, job_id)
+
+    async def analyze_all():
+        await asyncio.gather(
+            *[
+                server.analyze_invoice_document(job_id, "user_1", b"%PDF-1.4")
+                for job_id in job_ids
+            ]
+        )
+
+    run(analyze_all())
+
+    assert state["peak"] <= 2
+    assert all(
+        _get_document(fake_backend, job_id)["status"]
+        == server.INVOICE_STATUS_AWAITING_REVIEW
+        for job_id in job_ids
+    )
+
+
+def test_invoice_ai_concurrency_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "nao-e-numero")
+    assert (
+        server.get_invoice_ai_max_concurrency()
+        == server.DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+    )
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "0")
+    assert (
+        server.get_invoice_ai_max_concurrency()
+        == server.DEFAULT_INVOICE_AI_MAX_CONCURRENCY
+    )
+
+    monkeypatch.setenv("GROQ_INVOICE_MAX_CONCURRENCY", "5")
+    assert server.get_invoice_ai_max_concurrency() == 5

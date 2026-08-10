@@ -39,6 +39,10 @@ jobs:
           test -n "${{ secrets.GCP_SA_EMAIL }}"
           test -n "${{ secrets.MONGO_URL }}"
           test -n "${{ secrets.DB_NAME }}"
+          # Sem a chave da Groq o leitor de documentos sobe mudo: o motor de
+          # extração devolve None e todo documento falha pedindo lançamento
+          # manual. Falhar aqui é melhor que descobrir em produção.
+          test -n "${{ secrets.GROQ_KEY }}"
           echo "OK: required secrets present"
 
       - name: Auth to Google Cloud (WIF / OIDC)
@@ -71,7 +75,7 @@ jobs:
             --project "${PROJECT_ID}" \
             --allow-unauthenticated \
             --port 8080 \
-            --set-env-vars "MONGO_URL=${{ secrets.MONGO_URL }},DB_NAME=${{ secrets.DB_NAME }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}"
+            --set-env-vars "MONGO_URL=${{ secrets.MONGO_URL }},DB_NAME=${{ secrets.DB_NAME }},CORS_ORIGINS=${{ secrets.CORS_ORIGINS }},GROQ_KEY=${{ secrets.GROQ_KEY }}"
 
       - name: Read backend URL
         run: |
