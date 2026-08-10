@@ -50,15 +50,20 @@ class FakeCollection:
     def _project(self, doc, projection):
         if not projection:
             return dict(doc)
-        if projection.get("_id") == 0 and len(projection) == 1:
+
+        fields = {key: value for key, value in projection.items() if key != "_id"}
+        if not fields:
             return dict(doc)
-        projected = {}
-        for key, value in projection.items():
-            if key == "_id":
-                continue
-            if value and key in doc:
-                projected[key] = doc[key]
-        return projected
+
+        if all(not value for value in fields.values()):
+            # Projeção por exclusão: {"_id": 0, "raw_text": 0}.
+            return {
+                key: value
+                for key, value in doc.items()
+                if key != "_id" and key not in fields
+            }
+
+        return {key: doc[key] for key, value in fields.items() if value and key in doc}
 
     async def find_one(self, query, projection=None):
         for doc in self.docs:
@@ -120,6 +125,7 @@ class FakeDB:
         self.incomes = FakeCollection()
         self.savings = FakeCollection()
         self.invoice_reader_jobs = FakeCollection()
+        self.invoice_reader_batches = FakeCollection()
 
     async def command(self, name):
         if name != "ping":
@@ -536,65 +542,91 @@ def test_select_items_matching_expected_total_finds_subset_when_ai_overextracts(
     assert len(selected) == 5
 
 
-def test_invoice_reader_job_list_hides_expired_finished_jobs(fake_backend):
+def test_invoice_reader_list_purges_only_resolved_documents(fake_backend):
     now = datetime.now(timezone.utc)
+    old = (now - timedelta(days=server.INVOICE_JOB_RETENTION_DAYS + 1)).isoformat()
+    fake_backend.invoice_reader_jobs.docs.extend(
+        [
+            {
+                "job_id": "invjob_waiting",
+                "user_id": "user_1",
+                "status": server.INVOICE_STATUS_AWAITING_REVIEW,
+                "created_at": old,
+                "finished_at": old,
+            },
+            {
+                "job_id": "invjob_recent",
+                "user_id": "user_1",
+                "status": server.INVOICE_STATUS_APPROVED,
+                "created_at": (now - timedelta(days=1)).isoformat(),
+                "finished_at": (now - timedelta(days=1)).isoformat(),
+            },
+            {
+                "job_id": "invjob_old_approved",
+                "user_id": "user_1",
+                "status": server.INVOICE_STATUS_APPROVED,
+                "created_at": old,
+                "finished_at": old,
+            },
+        ]
+    )
+
+    documents = run(server.get_invoice_reader_jobs(limit=10))
+
+    # O documento aguardando revisão sobrevive por mais velho que seja: apagá-lo
+    # tiraria da frente do usuário justamente o que ele precisa revisar.
+    assert [item["job_id"] for item in documents] == [
+        "invjob_recent",
+        "invjob_waiting",
+    ]
+    assert all(
+        doc["job_id"] != "invjob_old_approved"
+        for doc in fake_backend.invoice_reader_jobs.docs
+    )
+
+
+def test_invoice_reader_list_hides_the_raw_pdf_text(fake_backend):
     fake_backend.invoice_reader_jobs.docs.append(
         {
             "job_id": "invjob_1",
             "user_id": "user_1",
-            "status": "queued",
-            "created_at": (now - timedelta(minutes=2)).isoformat(),
-            "finished_at": None,
-        }
-    )
-    fake_backend.invoice_reader_jobs.docs.append(
-        {
-            "job_id": "invjob_2",
-            "user_id": "user_1",
-            "status": "completed",
-            "created_at": (now - timedelta(minutes=1)).isoformat(),
-            "finished_at": (now - timedelta(minutes=1)).isoformat(),
-        }
-    )
-    fake_backend.invoice_reader_jobs.docs.append(
-        {
-            "job_id": "invjob_3",
-            "user_id": "user_1",
-            "status": "failed",
-            "created_at": (now - timedelta(minutes=10)).isoformat(),
-            "finished_at": (now - timedelta(minutes=10)).isoformat(),
+            "status": server.INVOICE_STATUS_AWAITING_REVIEW,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "raw_text": "texto extraído do PDF",
         }
     )
 
-    jobs = run(server.get_invoice_reader_jobs(limit=10))
-    assert [job["job_id"] for job in jobs] == ["invjob_2", "invjob_1"]
-    assert all(
-        doc["job_id"] != "invjob_3" for doc in fake_backend.invoice_reader_jobs.docs
-    )
+    documents = run(server.get_invoice_reader_jobs(limit=10))
+
+    assert "raw_text" not in documents[0]
 
 
-def _queue_invoice_job(fake_backend, job_id):
-    fake_backend.financial_methods.docs.append(
-        {"method_id": "method_credit", "user_id": "user_1", "name": "Crédito à vista"}
-    )
-    fake_backend.invoice_reader_jobs.docs.append(
-        {"job_id": job_id, "user_id": "user_1", "status": "queued"}
-    )
+# ---------------------------------------------------------------------------
+# Fluxo de revisão: analisar, aprovar, contestar, rejeitar
+# ---------------------------------------------------------------------------
 
 
-def _run_invoice_job(fake_backend, monkeypatch, job_id, fixture, document=None):
-    _queue_invoice_job(fake_backend, job_id)
-    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: fixture.raw_text)
-    monkeypatch.setattr(
-        server,
-        "extract_invoice_document",
-        lambda _txt: fixture.ai_document if document is None else document,
+class FakeUpload:
+    def __init__(self, filename, content=b"%PDF-1.4", content_type="application/pdf"):
+        self.filename = filename
+        self.content_type = content_type
+        self._content = content
+
+    async def read(self):
+        return self._content
+
+
+def _seed_document(fake_backend, job_id, user_id="user_1", **overrides):
+    record = server.build_invoice_document_record(
+        user_id, "invlote_1", "2026-08", overrides.pop("filename", "documento.pdf")
     )
-    run(
-        server.process_invoice_reader_job(
-            job_id, "user_1", "2026-08", "fat.pdf", b"%PDF-1.4"
-        )
-    )
+    record["job_id"] = job_id
+    record.update(overrides)
+    fake_backend.invoice_reader_jobs.docs.append(record)
+    return record
+
+
+def _get_document(fake_backend, job_id):
     return next(
         doc
         for doc in fake_backend.invoice_reader_jobs.docs
@@ -602,107 +634,620 @@ def _run_invoice_job(fake_backend, monkeypatch, job_id, fixture, document=None):
     )
 
 
-def test_invoice_reader_creates_expenses_from_ai_document(fake_backend, monkeypatch):
-    job = _run_invoice_job(fake_backend, monkeypatch, "job_nubank", invoices.NUBANK)
+def _mock_ai(monkeypatch, fixture, document=None):
+    """Mocka a IA. Nenhum teste toca a API: só o contrato está sob teste."""
+    calls = []
 
-    assert job["status"] == "completed"
-    assert job["bank_name"] == "Nubank"
-    assert job["expected_total"] == 452.14
-    assert job["parsed_total"] == 452.14
-    assert job["reconciliation_status"] == "ok"
-    assert job["reconciliation_anchor_label"] == "Total de compras de todos os cartões"
-    assert job["ai_summary"] == invoices.NUBANK.ai_document["summary"]
+    def fake_extract(raw_text, **kwargs):
+        calls.append({"raw_text": raw_text, "feedback": kwargs.get("feedback") or []})
+        if document is not None:
+            return document
+        return invoice_ai.normalize_invoice_document(fixture.ai_document)
 
+    monkeypatch.setattr(
+        server, "extract_pdf_text", lambda _pdf: fixture.raw_text if fixture else ""
+    )
+    monkeypatch.setattr(server, "extract_invoice_document", fake_extract)
+    return calls
+
+
+def _analyze(
+    fake_backend, monkeypatch, job_id, fixture, document=None, user_id="user_1"
+):
+    _seed_document(fake_backend, job_id, user_id=user_id)
+    _mock_ai(monkeypatch, fixture, document)
+    run(server.analyze_invoice_document(job_id, user_id, b"%PDF-1.4"))
+    return _get_document(fake_backend, job_id)
+
+
+def _capture_background_tasks(monkeypatch):
+    """Segura as tasks de análise para o teste rodá-las quando quiser."""
+    scheduled = []
+
+    def fake_create_task(coro):
+        scheduled.append(coro)
+        return SimpleNamespace(cancel=lambda: None)
+
+    monkeypatch.setattr(server.asyncio, "create_task", fake_create_task)
+    return scheduled
+
+
+def _discard(scheduled):
+    """Descarta análises agendadas que o teste não vai rodar."""
+    while scheduled:
+        scheduled.pop().close()
+
+
+def test_analysis_holds_the_document_as_a_draft_without_writing_expenses(
+    fake_backend, monkeypatch
+):
+    document = _analyze(fake_backend, monkeypatch, "doc_nubank", invoices.NUBANK)
+
+    assert document["status"] == server.INVOICE_STATUS_AWAITING_REVIEW
+    assert document["regime"] == server.REGIME_CARD
+    assert document["reconciliation_status"] == "ok"
+    assert document["reconciled"] is True
+    assert document["ai_summary"] == invoices.NUBANK.ai_document["summary"]
+    assert document["expected_total"] == 452.14
+    assert [
+        (item["name"], item["amount"]) for item in document["expense_plan"]
+    ] == list(invoices.NUBANK.expected_purchases)
+    # O rascunho fica no documento, não em expenses.
+    assert fake_backend.expenses.docs == []
+    assert fake_backend.financial_categories.docs == []
+
+
+def test_approving_a_card_invoice_creates_one_expense_per_purchase(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+
+    approved = run(server.approve_invoice_reader_document("doc_itau"))
+
+    assert approved["status"] == server.INVOICE_STATUS_APPROVED
+    assert len(approved["created_expense_ids"]) == 3
     created = [(doc["name"], doc["amount"]) for doc in fake_backend.expenses.docs]
-    assert created == list(invoices.NUBANK.expected_purchases)
+    assert created == list(invoices.ITAU.expected_purchases)
     assert all(doc["month"] == "2026-08" for doc in fake_backend.expenses.docs)
-
-
-def test_invoice_reader_names_category_from_ai_issuer(fake_backend, monkeypatch):
-    _run_invoice_job(fake_backend, monkeypatch, "job_itau", invoices.ITAU)
-
+    # Cartão mantém o comportamento anterior: categoria por emissor e sufixo.
     assert [doc["name"] for doc in fake_backend.financial_categories.docs] == [
         "Itaú final 4321"
     ]
     assert all(
-        doc["category"] == "Itaú final 4321" for doc in fake_backend.expenses.docs
+        doc["category"] == "Itaú final 4321" and doc["subcategory"] == "fatura-cartao"
+        for doc in fake_backend.expenses.docs
     )
 
 
-def test_invoice_reader_drops_next_invoice_items_via_subset_sum(
+def test_approving_a_card_invoice_uses_the_credit_card_method(
     fake_backend, monkeypatch
 ):
-    job = _run_invoice_job(
-        fake_backend, monkeypatch, "job_itau_over", invoices.ITAU_OVEREXTRACTED
+    _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+
+    run(server.approve_invoice_reader_document("doc_itau"))
+
+    method = next(
+        doc
+        for doc in fake_backend.financial_methods.docs
+        if doc["name"] == "crédito a vista"
+    )
+    assert all(
+        doc["method_id"] == method["method_id"] for doc in fake_backend.expenses.docs
     )
 
-    assert job["status"] == "completed"
-    assert job["reconciliation_status"] == "adjusted"
-    assert job["parsed_total"] == 426.80
+
+def test_approving_a_light_bill_creates_a_single_expense_with_the_ai_category(
+    fake_backend, monkeypatch
+):
+    document = _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    assert document["regime"] == server.REGIME_SINGLE_CHARGE
+    assert document["doc_type"] == "conta_luz"
+    assert document["amount_total"] == 187.40
+
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    assert len(fake_backend.expenses.docs) == 1
+    expense = fake_backend.expenses.docs[0]
+    assert expense["amount"] == 187.40
+    assert expense["category"] == "Luz"
+    assert expense["subcategory"] == "conta-luz"
+    assert expense["month"] == "2026-08"
+    assert expense["name"] == "Conta de luz Energia Aurora - 2026-07"
+    assert [doc["name"] for doc in fake_backend.financial_categories.docs] == ["Luz"]
+
+
+def test_approving_a_bill_never_uses_the_credit_card_naming(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    expense = fake_backend.expenses.docs[0]
+    assert "final" not in expense["category"]
+    assert expense["subcategory"] != "fatura-cartao"
+    method = next(
+        doc
+        for doc in fake_backend.financial_methods.docs
+        if doc["method_id"] == expense["method_id"]
+    )
+    assert method["name"] == "boleto"
+
+
+def test_approving_a_bill_without_itemization_creates_one_expense(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_cond", invoices.CONDOMINIO)
+
+    run(server.approve_invoice_reader_document("doc_cond"))
+
+    assert len(fake_backend.expenses.docs) == 1
+    expense = fake_backend.expenses.docs[0]
+    assert expense["amount"] == 640.00
+    assert expense["category"] == "Condomínio"
+    assert expense["subcategory"] == "condominio"
+
+
+def test_bill_falls_back_to_a_category_derived_from_the_doc_type(
+    fake_backend, monkeypatch
+):
+    payload = {**invoices.CONTA_LUZ.ai_document}
+    payload.pop("suggested_category")
+    document = invoice_ai.normalize_invoice_document(payload)
+
+    _analyze(
+        fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ, document=document
+    )
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    assert fake_backend.expenses.docs[0]["category"] == "Luz"
+
+
+def test_approving_twice_does_not_duplicate_expenses(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    first = run(server.approve_invoice_reader_document("doc_luz"))
+    second = run(server.approve_invoice_reader_document("doc_luz"))
+
+    assert len(fake_backend.expenses.docs) == 1
+    assert first["created_expense_ids"] == second["created_expense_ids"]
+    assert second["status"] == server.INVOICE_STATUS_APPROVED
+
+
+def test_approving_a_card_invoice_twice_does_not_duplicate_expenses(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_itau", invoices.ITAU)
+
+    run(server.approve_invoice_reader_document("doc_itau"))
+    run(server.approve_invoice_reader_document("doc_itau"))
+
     assert len(fake_backend.expenses.docs) == 3
-    assert round(sum(doc["amount"] for doc in fake_backend.expenses.docs), 2) == 426.80
 
 
-def test_invoice_reader_accepts_gap_covered_by_charges(fake_backend, monkeypatch):
-    job = _run_invoice_job(fake_backend, monkeypatch, "job_gap", invoices.NEON_GAP)
+def test_card_invoice_keeps_the_subset_sum_and_the_charge_gap(
+    fake_backend, monkeypatch
+):
+    over = _analyze(fake_backend, monkeypatch, "doc_over", invoices.ITAU_OVEREXTRACTED)
+    assert over["reconciliation_status"] == "adjusted"
+    assert over["parsed_total"] == 426.80
 
-    assert job["status"] == "completed"
-    assert job["reconciliation_status"] == "gap_covered"
-    assert job["non_purchase_total"] == 0.27
-    assert job["non_purchase_count"] == 1
-    assert len(fake_backend.expenses.docs) == 3
+    gap = _analyze(fake_backend, monkeypatch, "doc_gap", invoices.NEON_GAP)
+    assert gap["reconciliation_status"] == "gap_covered"
+    assert gap["non_purchase_total"] == 0.27
+
+    run(server.approve_invoice_reader_document("doc_over"))
+    run(server.approve_invoice_reader_document("doc_gap"))
+
+    assert len(fake_backend.expenses.docs) == 6
 
 
-def test_invoice_reader_fails_when_ai_finds_no_anchor(fake_backend, monkeypatch):
-    document = {**invoices.NEON.ai_document, "reconciliation_anchor": None}
-    document = invoice_ai.normalize_invoice_document(document)
+# ---------------------------------------------------------------------------
+# O portão: nada vira gasto sem conferência aritmética, nos dois regimes
+# ---------------------------------------------------------------------------
 
-    job = _run_invoice_job(
-        fake_backend, monkeypatch, "job_no_anchor", invoices.NEON, document=document
+
+def _mismatching_card_document():
+    return invoice_ai.normalize_invoice_document(
+        {**invoices.NEON.ai_document, "items": invoices.NEON.ai_document["items"][:2]}
     )
 
-    assert job["status"] == "failed"
-    assert len(fake_backend.expenses.docs) == 0
-    assert "total de compras" in job["errors"][0]
-    assert "Adicione os gastos manualmente" in job["errors"][0]
 
-
-def test_invoice_reader_fails_when_sum_does_not_match_anchor(fake_backend, monkeypatch):
-    document = invoice_ai.normalize_invoice_document(
+def _mismatching_bill_document():
+    return invoice_ai.normalize_invoice_document(
         {
-            **invoices.NEON.ai_document,
-            "items": invoices.NEON.ai_document["items"][:2],
+            **invoices.CONTA_LUZ.ai_document,
+            "items": invoices.CONTA_LUZ.ai_document["items"][:3],
         }
     )
 
-    job = _run_invoice_job(
-        fake_backend, monkeypatch, "job_mismatch", invoices.NEON, document=document
+
+def _anchorless(fixture):
+    return invoice_ai.normalize_invoice_document(
+        {**fixture.ai_document, "reconciliation_anchor": None}
     )
 
-    assert job["status"] == "failed"
-    assert len(fake_backend.expenses.docs) == 0
-    assert "não conseguiu conciliar" in job["errors"][0]
+
+@pytest.mark.parametrize(
+    "fixture,document,expected_status",
+    [
+        (invoices.NEON, _mismatching_card_document(), "mismatch"),
+        (invoices.CONTA_LUZ, _mismatching_bill_document(), "mismatch"),
+        (invoices.NEON, _anchorless(invoices.NEON), "no_anchor"),
+        (invoices.CONTA_LUZ, _anchorless(invoices.CONTA_LUZ), "no_anchor"),
+    ],
+    ids=["cartao_mismatch", "conta_mismatch", "cartao_sem_ancora", "conta_sem_ancora"],
+)
+def test_gate_blocks_approval_when_reconciliation_does_not_close(
+    fake_backend, monkeypatch, fixture, document, expected_status
+):
+    held = _analyze(fake_backend, monkeypatch, "doc_gate", fixture, document=document)
+
+    # O documento chega à revisão sinalizado, para o usuário não aprovar às cegas.
+    assert held["status"] == server.INVOICE_STATUS_AWAITING_REVIEW
+    assert held["reconciliation_status"] == expected_status
+    assert held["reconciled"] is False
+    assert held["review_warning"]
+
+    with pytest.raises(HTTPException) as blocked:
+        run(server.approve_invoice_reader_document("doc_gate"))
+
+    assert blocked.value.status_code == 409
+    assert fake_backend.expenses.docs == []
+    assert _get_document(fake_backend, "doc_gate")["status"] == (
+        server.INVOICE_STATUS_AWAITING_REVIEW
+    )
 
 
-def test_invoice_reader_fails_when_ai_returns_nothing(fake_backend, monkeypatch):
-    _queue_invoice_job(fake_backend, "job_empty")
-    monkeypatch.setattr(server, "extract_pdf_text", lambda _pdf: "fatura")
-    monkeypatch.setattr(server, "extract_invoice_document", lambda _txt: None)
+def test_analysis_fails_when_the_ai_reads_nothing(fake_backend, monkeypatch):
+    document = _analyze(
+        fake_backend, monkeypatch, "doc_empty", invoices.NEON, document=None
+    )
+    assert document["status"] == server.INVOICE_STATUS_AWAITING_REVIEW
 
-    run(
-        server.process_invoice_reader_job(
-            "job_empty", "user_1", "2026-08", "fat.pdf", b"%PDF-1.4"
+    _seed_document(fake_backend, "doc_null")
+    _mock_ai(monkeypatch, invoices.NEON)
+    monkeypatch.setattr(server, "extract_invoice_document", lambda _txt, **_kw: None)
+    run(server.analyze_invoice_document("doc_null", "user_1", b"%PDF-1.4"))
+
+    failed = _get_document(fake_backend, "doc_null")
+    assert failed["status"] == server.INVOICE_STATUS_FAILED
+    assert "Adicione os gastos manualmente" in failed["errors"][0]
+    assert fake_backend.expenses.docs == []
+
+
+def test_approval_is_refused_for_a_document_that_is_not_under_review(
+    fake_backend, monkeypatch
+):
+    _seed_document(
+        fake_backend, "doc_analyzing", status=server.INVOICE_STATUS_ANALYZING
+    )
+
+    with pytest.raises(HTTPException) as blocked:
+        run(server.approve_invoice_reader_document("doc_analyzing"))
+
+    assert blocked.value.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# Contestação e rejeição
+# ---------------------------------------------------------------------------
+
+
+def test_contesting_reprocesses_with_the_user_message_as_context(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    contested = run(
+        server.contest_invoice_reader_document(
+            "doc_luz",
+            server.InvoiceContestRequest(message="isso é conta de água, não de luz"),
         )
     )
 
-    job = next(
-        doc
-        for doc in fake_backend.invoice_reader_jobs.docs
-        if doc.get("job_id") == "job_empty"
+    assert contested["status"] == server.INVOICE_STATUS_CONTESTED
+    assert contested["attempts"] == 1
+    assert (
+        contested["contestations"][0]["message"] == "isso é conta de água, não de luz"
     )
-    assert job["status"] == "failed"
-    assert len(fake_backend.expenses.docs) == 0
-    assert "Adicione os gastos manualmente" in job["errors"][0]
+    assert fake_backend.expenses.docs == []
+
+    # O reprocessamento manda a contestação junto e devolve o novo parecer.
+    water = invoice_ai.normalize_invoice_document(
+        {
+            **invoices.CONTA_LUZ.ai_document,
+            "doc_type": "conta_agua",
+            "suggested_category": "Água",
+            "summary": "parece ser uma conta de água",
+        }
+    )
+    calls = _mock_ai(monkeypatch, invoices.CONTA_LUZ, document=water)
+    for coro in scheduled:
+        run(coro)
+
+    assert calls[0]["feedback"] == ["isso é conta de água, não de luz"]
+    reanalyzed = _get_document(fake_backend, "doc_luz")
+    assert reanalyzed["status"] == server.INVOICE_STATUS_AWAITING_REVIEW
+    assert reanalyzed["doc_type"] == "conta_agua"
+    assert reanalyzed["ai_summary"] == "parece ser uma conta de água"
+
+    run(server.approve_invoice_reader_document("doc_luz"))
+    assert fake_backend.expenses.docs[0]["category"] == "Água"
+    assert fake_backend.expenses.docs[0]["subcategory"] == "conta-agua"
+
+
+def test_contesting_reuses_the_stored_pdf_text_and_stacks_the_history(
+    fake_backend, monkeypatch
+):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    for message in ("o valor certo é 447,99", "a categoria devia ser Moradia"):
+        run(
+            server.contest_invoice_reader_document(
+                "doc_luz", server.InvoiceContestRequest(message=message)
+            )
+        )
+        calls = _mock_ai(monkeypatch, invoices.CONTA_LUZ)
+        run(scheduled.pop(0))
+
+    # Sem novo upload: o texto do PDF guardado é reaproveitado.
+    assert calls[-1]["raw_text"] == invoices.CONTA_LUZ.raw_text
+    assert calls[-1]["feedback"] == [
+        "o valor certo é 447,99",
+        "a categoria devia ser Moradia",
+    ]
+    assert _get_document(fake_backend, "doc_luz")["attempts"] == 2
+
+
+def test_contesting_stops_at_the_attempt_cap(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    for attempt in range(server.INVOICE_MAX_CONTESTATIONS):
+        run(
+            server.contest_invoice_reader_document(
+                "doc_luz", server.InvoiceContestRequest(message=f"tentativa {attempt}")
+            )
+        )
+        _mock_ai(monkeypatch, invoices.CONTA_LUZ)
+        run(scheduled.pop(0))
+
+    with pytest.raises(HTTPException) as capped:
+        run(
+            server.contest_invoice_reader_document(
+                "doc_luz", server.InvoiceContestRequest(message="mais uma vez")
+            )
+        )
+
+    assert capped.value.status_code == 409
+    assert str(server.INVOICE_MAX_CONTESTATIONS) in capped.value.detail
+    assert _get_document(fake_backend, "doc_luz")["attempts"] == (
+        server.INVOICE_MAX_CONTESTATIONS
+    )
+
+
+def test_contesting_an_approved_document_is_refused(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    with pytest.raises(HTTPException) as refused:
+        run(
+            server.contest_invoice_reader_document(
+                "doc_luz", server.InvoiceContestRequest(message="errado")
+            )
+        )
+
+    assert refused.value.status_code == 409
+    assert len(fake_backend.expenses.docs) == 1
+
+
+def test_contesting_requires_a_message(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    with pytest.raises(HTTPException) as empty:
+        run(
+            server.contest_invoice_reader_document(
+                "doc_luz", server.InvoiceContestRequest(message="   ")
+            )
+        )
+
+    assert empty.value.status_code == 400
+
+
+def test_contesting_a_failed_reading_is_allowed(fake_backend, monkeypatch):
+    _seed_document(
+        fake_backend,
+        "doc_failed",
+        status=server.INVOICE_STATUS_FAILED,
+        errors=["A IA não conseguiu ler o documento."],
+        raw_text=invoices.CONDOMINIO.raw_text,
+    )
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    run(
+        server.contest_invoice_reader_document(
+            "doc_failed",
+            server.InvoiceContestRequest(message="é um boleto de condomínio"),
+        )
+    )
+    _mock_ai(monkeypatch, invoices.CONDOMINIO)
+    run(scheduled.pop(0))
+
+    assert _get_document(fake_backend, "doc_failed")["status"] == (
+        server.INVOICE_STATUS_AWAITING_REVIEW
+    )
+
+
+def test_rejecting_discards_without_writing_anything(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+
+    rejected = run(server.reject_invoice_reader_document("doc_luz"))
+
+    assert rejected["status"] == server.INVOICE_STATUS_REJECTED
+    assert fake_backend.expenses.docs == []
+    assert fake_backend.financial_categories.docs == []
+
+    with pytest.raises(HTTPException) as blocked:
+        run(server.approve_invoice_reader_document("doc_luz"))
+    assert blocked.value.status_code == 409
+
+
+def test_rejecting_an_approved_document_is_refused(fake_backend, monkeypatch):
+    _analyze(fake_backend, monkeypatch, "doc_luz", invoices.CONTA_LUZ)
+    run(server.approve_invoice_reader_document("doc_luz"))
+
+    with pytest.raises(HTTPException) as refused:
+        run(server.reject_invoice_reader_document("doc_luz"))
+
+    assert refused.value.status_code == 409
+    assert len(fake_backend.expenses.docs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Upload em lote e isolamento entre usuários
+# ---------------------------------------------------------------------------
+
+
+def test_upload_creates_a_batch_with_one_document_per_pdf(fake_backend, monkeypatch):
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    batch = run(
+        server.create_invoice_reader_job(
+            requested_month="2026-08",
+            files=[FakeUpload("luz.pdf"), FakeUpload("condominio.pdf")],
+        )
+    )
+
+    assert batch["batch_id"].startswith("invlote_")
+    assert [item["filename"] for item in batch["documents"]] == [
+        "luz.pdf",
+        "condominio.pdf",
+    ]
+    assert all(
+        item["status"] == server.INVOICE_STATUS_ANALYZING for item in batch["documents"]
+    )
+    assert all(item["batch_id"] == batch["batch_id"] for item in batch["documents"])
+    assert "raw_text" not in batch["documents"][0]
+    assert len(fake_backend.invoice_reader_jobs.docs) == 2
+    assert fake_backend.invoice_reader_batches.docs[0]["document_ids"] == [
+        item["job_id"] for item in batch["documents"]
+    ]
+    assert len(scheduled) == 2
+
+    _mock_ai(monkeypatch, invoices.CONTA_LUZ)
+    for coro in scheduled:
+        run(coro)
+
+    documents = run(server.get_invoice_reader_jobs(limit=10))
+    assert all(
+        item["status"] == server.INVOICE_STATUS_AWAITING_REVIEW for item in documents
+    )
+    assert fake_backend.expenses.docs == []
+
+
+def test_upload_still_accepts_a_single_file_field(fake_backend, monkeypatch):
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    batch = run(
+        server.create_invoice_reader_job(
+            requested_month="2026-08", file=FakeUpload("fatura.pdf")
+        )
+    )
+
+    assert [item["filename"] for item in batch["documents"]] == ["fatura.pdf"]
+    _discard(scheduled)
+
+
+@pytest.mark.parametrize(
+    "kwargs,message",
+    [
+        ({"requested_month": "agosto", "files": [FakeUpload("a.pdf")]}, "Mês inválido"),
+        ({"requested_month": "2026-08", "files": []}, "ao menos um arquivo"),
+        (
+            {
+                "requested_month": "2026-08",
+                "files": [
+                    FakeUpload("a.pdf"),
+                    FakeUpload("b.txt", content_type="text/plain"),
+                ],
+            },
+            "Apenas arquivos PDF",
+        ),
+        (
+            {
+                "requested_month": "2026-08",
+                "files": [FakeUpload("a.pdf"), FakeUpload("vazio.pdf", content=b"")],
+            },
+            "vazio",
+        ),
+    ],
+    ids=["mes_invalido", "sem_arquivo", "nao_pdf", "pdf_vazio"],
+)
+def test_upload_validates_the_whole_batch_before_creating_anything(
+    fake_backend, monkeypatch, kwargs, message
+):
+    _capture_background_tasks(monkeypatch)
+
+    with pytest.raises(HTTPException) as invalid:
+        run(server.create_invoice_reader_job(**kwargs))
+
+    assert invalid.value.status_code == 400
+    assert message in invalid.value.detail
+    assert fake_backend.invoice_reader_jobs.docs == []
+    assert fake_backend.invoice_reader_batches.docs == []
+
+
+def test_a_user_never_reads_or_acts_on_another_users_document(
+    fake_backend, monkeypatch
+):
+    _analyze(
+        fake_backend,
+        monkeypatch,
+        "doc_de_outro",
+        invoices.CONTA_LUZ,
+        user_id="user_2",
+    )
+    _analyze(fake_backend, monkeypatch, "doc_meu", invoices.CONDOMINIO)
+
+    # A sessão é sempre user_1 (fixture fake_backend).
+    visible = run(server.get_invoice_reader_jobs(limit=10))
+    assert [item["job_id"] for item in visible] == ["doc_meu"]
+
+    for call in (
+        server.approve_invoice_reader_document("doc_de_outro"),
+        server.reject_invoice_reader_document("doc_de_outro"),
+        server.contest_invoice_reader_document(
+            "doc_de_outro", server.InvoiceContestRequest(message="não é meu")
+        ),
+    ):
+        with pytest.raises(HTTPException) as forbidden:
+            run(call)
+        assert forbidden.value.status_code == 404
+
+    # O documento do outro usuário continua intacto e sem gastos gravados.
+    assert _get_document(fake_backend, "doc_de_outro")["status"] == (
+        server.INVOICE_STATUS_AWAITING_REVIEW
+    )
+    assert fake_backend.expenses.docs == []
+
+
+def test_batches_are_scoped_per_user(fake_backend, monkeypatch):
+    scheduled = _capture_background_tasks(monkeypatch)
+
+    batch = run(
+        server.create_invoice_reader_job(
+            requested_month="2026-08", files=[FakeUpload("luz.pdf")]
+        )
+    )
+
+    assert fake_backend.invoice_reader_batches.docs[0]["user_id"] == "user_1"
+    assert all(
+        doc["user_id"] == "user_1" for doc in fake_backend.invoice_reader_jobs.docs
+    )
+    assert batch["documents"][0]["user_id"] == "user_1"
+    _discard(scheduled)
 
 
 def test_bank_specific_parsers_are_gone():
@@ -716,6 +1261,8 @@ def test_bank_specific_parsers_are_gone():
         "extract_invoice_items_with_ai",
         "extract_invoice_items_from_pdf_with_ai",
         "run_invoice_ai_payload",
+        # O job que extraía e gravava direto deu lugar ao fluxo de revisão.
+        "process_invoice_reader_job",
     ]
 
     assert [name for name in removed if hasattr(server, name)] == []

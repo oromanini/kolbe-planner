@@ -214,6 +214,7 @@ def test_prompt_describes_the_contract_and_the_traps():
     for field in (
         "issuer",
         "doc_type",
+        "suggested_category",
         "totals",
         "label_original",
         "reconciliation_anchor",
@@ -226,6 +227,90 @@ def test_prompt_describes_the_contract_and_the_traps():
     assert "JSON" in prompt
     for item_type in invoice_ai.INVOICE_ITEM_TYPES:
         assert item_type in prompt
+
+
+def test_prompt_covers_every_document_type_without_assuming_a_credit_card():
+    prompt = invoice_ai.build_invoice_user_prompt("texto do documento")
+
+    for doc_type in invoice_ai.DOC_TYPES:
+        assert doc_type in prompt
+    # As regras de cartão continuam, mas condicionadas ao tipo do documento.
+    assert "FATURA DE CARTÃO" in prompt
+    assert "CONTA DE COBRANÇA ÚNICA" in prompt
+    assert "parcela desta fatura" in prompt
+    assert "Normalmente é uma fatura de cartão de crédito" not in prompt
+
+
+def test_prompt_carries_the_user_contestations_when_reprocessing():
+    prompt = invoice_ai.build_invoice_user_prompt(
+        "texto do documento",
+        feedback=["isso é conta de água, não de luz", "o valor certo é 447,99"],
+    )
+
+    assert "contestada pelo usuário" in prompt
+    assert "1. isso é conta de água, não de luz" in prompt
+    assert "2. o valor certo é 447,99" in prompt
+
+
+def test_prompt_without_contestations_has_no_feedback_block():
+    assert "contestada pelo usuário" not in invoice_ai.build_invoice_user_prompt("x")
+    assert "contestada pelo usuário" not in invoice_ai.build_invoice_user_prompt(
+        "x", feedback=["  ", ""]
+    )
+
+
+def test_extract_sends_the_contestations_to_the_model(groq_env, monkeypatch):
+    fake = install_requests(
+        monkeypatch,
+        [FakeResponse(chat_completion(json.dumps(invoices.CONTA_LUZ.ai_document)))],
+    )
+
+    invoice_ai.extract_invoice_document(
+        invoices.CONTA_LUZ.raw_text, feedback=["é conta de água"]
+    )
+
+    assert "é conta de água" in fake.calls[0]["json"]["messages"][1]["content"]
+
+
+@pytest.mark.parametrize(
+    "raw_value,expected",
+    [
+        ("fatura_cartao", "fatura_cartao"),
+        ("Fatura de Cartão", "fatura_cartao"),
+        ("credit_card", "fatura_cartao"),
+        ("conta_luz", "conta_luz"),
+        ("conta de energia", "conta_luz"),
+        ("Energia Elétrica", "conta_luz"),
+        ("conta_agua", "conta_agua"),
+        ("saneamento", "conta_agua"),
+        ("internet", "internet_telefone"),
+        ("condomínio", "condominio"),
+        ("boleto bancário", "boleto"),
+        ("nota fiscal de serviço", "outro"),
+        ("", "outro"),
+        (None, "outro"),
+    ],
+)
+def test_normalize_doc_type_reduces_the_ai_answer_to_the_closed_vocabulary(
+    raw_value, expected
+):
+    assert invoice_ai.normalize_doc_type(raw_value) == expected
+
+
+@pytest.mark.parametrize(
+    "doc_type,expected_regime",
+    [
+        ("fatura_cartao", invoice_ai.REGIME_CARD),
+        ("conta_luz", invoice_ai.REGIME_SINGLE_CHARGE),
+        ("conta_agua", invoice_ai.REGIME_SINGLE_CHARGE),
+        ("condominio", invoice_ai.REGIME_SINGLE_CHARGE),
+        ("boleto", invoice_ai.REGIME_SINGLE_CHARGE),
+        ("outro", invoice_ai.REGIME_SINGLE_CHARGE),
+        (None, invoice_ai.REGIME_SINGLE_CHARGE),
+    ],
+)
+def test_doc_type_decides_the_reconciliation_regime(doc_type, expected_regime):
+    assert invoice_ai.document_regime({"doc_type": doc_type}) == expected_regime
 
 
 def test_prompt_truncates_long_documents(monkeypatch):
@@ -431,9 +516,129 @@ def test_reconciliation_works_in_integer_cents():
     assert invoice_ai.reconcile_invoice_document(document)["status"] == "ok"
 
 
+@pytest.mark.parametrize(
+    "fixture", invoices.SINGLE_CHARGE_FIXTURES, ids=lambda fixture: fixture.name
+)
+def test_single_charge_components_must_sum_the_amount_due(fixture):
+    document = invoice_ai.normalize_invoice_document(fixture.ai_document)
+
+    result = invoice_ai.reconcile_invoice_document(document)
+
+    assert result["regime"] == invoice_ai.REGIME_SINGLE_CHARGE
+    assert result["status"] == "ok"
+    assert result["anchor_total"] == fixture.anchor_total
+    assert result["purchase_total"] == fixture.anchor_total
+
+
+def test_single_charge_with_one_component_has_to_equal_the_total():
+    document = invoice_ai.normalize_invoice_document(
+        {
+            "doc_type": "boleto",
+            "items": [
+                {"description": "Mensalidade", "amount": 120.00, "type": "componente"}
+            ],
+            "reconciliation_anchor": {
+                "label_original": "Valor a pagar",
+                "value": 130.0,
+            },
+        }
+    )
+
+    result = invoice_ai.reconcile_invoice_document(document)
+
+    assert result["status"] == "mismatch"
+    assert result["gap"] == 10.0
+
+
+def test_single_charge_reports_mismatch_when_a_component_is_missing():
+    payload = {
+        **invoices.CONTA_LUZ.ai_document,
+        "items": invoices.CONTA_LUZ.ai_document["items"][:3],
+    }
+    document = invoice_ai.normalize_invoice_document(payload)
+
+    result = invoice_ai.reconcile_invoice_document(document)
+
+    assert result["status"] == "mismatch"
+    assert result["purchase_total"] == 159.65
+    assert result["gap"] == 27.75
+
+
+def test_single_charge_without_amount_due_is_no_anchor():
+    document = invoice_ai.normalize_invoice_document(
+        {**invoices.CONTA_LUZ.ai_document, "reconciliation_anchor": None}
+    )
+
+    result = invoice_ai.reconcile_invoice_document(document)
+
+    assert result["regime"] == invoice_ai.REGIME_SINGLE_CHARGE
+    assert result["status"] == "no_anchor"
+
+
+def test_single_charge_does_not_borrow_the_card_leniencies():
+    """Nada de subset-sum nem de "encargos explicam a diferença" numa conta."""
+    document = invoice_ai.normalize_invoice_document(
+        {
+            "doc_type": "conta_agua",
+            "items": [
+                {"description": "Água", "amount": 80.00, "type": "componente"},
+                {"description": "Esgoto", "amount": 60.00, "type": "componente"},
+            ],
+            # 80,00 sozinho bateria com a âncora se houvesse subset-sum.
+            "reconciliation_anchor": {"label_original": "Total", "value": 80.00},
+        }
+    )
+
+    assert invoice_ai.reconcile_invoice_document(document)["status"] == "mismatch"
+
+
+def test_single_charge_subtracts_a_discount_from_the_components():
+    document = invoice_ai.normalize_invoice_document(
+        {
+            "doc_type": "internet_telefone",
+            "items": [
+                {"description": "Plano fibra", "amount": 129.90, "type": "componente"},
+                {
+                    "description": "Desconto fidelidade",
+                    "amount": 20.00,
+                    "type": "desconto",
+                },
+            ],
+            "reconciliation_anchor": {"label_original": "Total", "value": 109.90},
+        }
+    )
+
+    result = invoice_ai.reconcile_invoice_document(document)
+
+    assert result["status"] == "ok"
+    assert result["purchase_total"] == 109.90
+
+
+@pytest.mark.parametrize(
+    "doc_type,expected",
+    [
+        ("conta_luz", "Luz"),
+        ("conta_agua", "Água"),
+        ("condominio", "Condomínio"),
+        ("internet_telefone", "Internet e telefone"),
+        ("outro", "Outros"),
+    ],
+)
+def test_default_category_falls_back_by_doc_type(doc_type, expected):
+    assert invoice_ai.default_category_for_doc_type(doc_type) == expected
+
+
+def test_normalize_document_keeps_the_category_suggested_by_the_ai():
+    document = invoice_ai.normalize_invoice_document(invoices.CONTA_LUZ.ai_document)
+
+    assert document["doc_type"] == "conta_luz"
+    assert document["suggested_category"] == "Luz"
+
+
 def test_reconciliation_ignores_credits_when_summing_purchases():
     document = invoice_ai.normalize_invoice_document(
         {
+            "doc_type": "fatura_cartao",
             "items": [
                 {"description": "COMPRA", "amount": 100.0, "type": "compra"},
                 {"description": "PAGAMENTO", "amount": 80.0, "type": "pagamento"},

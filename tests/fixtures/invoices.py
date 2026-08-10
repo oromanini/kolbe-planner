@@ -1,8 +1,10 @@
-"""Fixtures sintéticas de fatura, montadas a partir de três arquétipos de layout.
+"""Fixtures sintéticas de documento financeiro, por arquétipo de layout.
 
-Não há faturas reais no repositório e não deve haver: são dados pessoais. Estes
-textos foram escritos à mão reproduzindo as armadilhas observadas em faturas
-reais de Itaú, Nubank e Neon:
+Não há documentos reais no repositório e não deve haver: são dados pessoais.
+Estes textos foram escritos à mão, com emissores fictícios, reproduzindo as
+armadilhas observadas em documentos reais.
+
+Faturas de cartão (regime de conciliação por total de compras):
 
 * Itaú — um lançamento por linha, mais uma seção "Total para próximas faturas"
   que não pertence a esta fatura.
@@ -11,6 +13,14 @@ reais de Itaú, Nubank e Neon:
   linha do bloco, divergência de arredondamento de um centavo entre a
   explicação e o valor lançado, e estorno com menos Unicode (U+2212).
 * Neon — texto corrido com valores rotulados.
+
+Contas de cobrança única (regime de conciliação por valor a pagar):
+
+* Conta de luz — composição detalhada (consumo, iluminação pública, bandeira,
+  tributos) que tem que somar o total a pagar, mais leituras em kWh, valor
+  após o vencimento e histórico de consumo, que não são o valor a pagar.
+* Condomínio — cobrança sem detalhamento: um item só, igual ao total, mais um
+  valor com multa por atraso que não pode ser confundido com o valor a pagar.
 
 Cada fixture carrega o texto de entrada e o documento que uma leitura correta
 produz, no contrato de saída da IA. Os testes usam esse documento como resposta
@@ -29,7 +39,7 @@ class InvoiceFixture:
     ai_document: dict
     anchor_label: str
     anchor_total: float
-    # (descrição, valor) dos itens que devem virar gastos.
+    # (descrição, valor) dos itens que devem entrar na conciliação.
     expected_purchases: Tuple[Tuple[str, float], ...]
     expected_status: str
     # Valores que existem no documento mas não podem virar gasto.
@@ -66,6 +76,7 @@ AuroraApple 15/18 150,00
 ITAU_DOCUMENT = {
     "issuer": "Itaú",
     "doc_type": "fatura_cartao",
+    "suggested_category": "Cartão Itaú",
     "period": "2026-08",
     "due_date": "2026-08-10",
     "totals": [
@@ -209,6 +220,7 @@ R$ 172,14
 NUBANK_DOCUMENT = {
     "issuer": "Nubank",
     "doc_type": "fatura_cartao",
+    "suggested_category": "Cartão Nubank",
     "period": "2026-08",
     "due_date": "2026-08-10",
     "totals": [
@@ -333,6 +345,7 @@ NEON_TOTALS = [
 NEON_DOCUMENT = {
     "issuer": "Neon",
     "doc_type": "fatura_cartao",
+    "suggested_category": "Cartão Neon",
     "period": "2026-08",
     "due_date": "2026-08-15",
     "totals": NEON_TOTALS,
@@ -389,13 +402,161 @@ NEON_GAP = InvoiceFixture(
 )
 
 
+# --------------------------------------------------------------------------
+# Arquétipo conta de luz: cobrança única com composição detalhada.
+# --------------------------------------------------------------------------
+
+CONTA_LUZ_TEXT = """ENERGIA AURORA DISTRIBUIDORA S.A.
+Conta de energia elétrica - instalação 000000000
+Referente a 07/2026 - vencimento em 12/08/2026
+
+Leitura anterior 1.240 kWh - leitura atual 1.418 kWh - consumo 178 kWh
+
+Descrição                                  Valor (R$)
+Consumo de energia - 178 kWh                   142,30
+Contribuição de iluminação pública              12,45
+Bandeira tarifária amarela                       4,90
+Tributos (ICMS, PIS e COFINS)                   27,75
+
+TOTAL A PAGAR R$ 187,40
+Valor com multa e juros após o vencimento R$ 193,02
+Histórico: consumo de 07/2025 custou R$ 165,20
+"""
+
+CONTA_LUZ_DOCUMENT = {
+    "issuer": "Energia Aurora",
+    "doc_type": "conta_luz",
+    "suggested_category": "Luz",
+    "period": "2026-07",
+    "due_date": "2026-08-12",
+    "totals": [
+        {"label_original": "TOTAL A PAGAR", "value": 187.40},
+        {
+            "label_original": "Valor com multa e juros após o vencimento",
+            "value": 193.02,
+        },
+    ],
+    "reconciliation_anchor": {
+        "label_original": "TOTAL A PAGAR",
+        "value": 187.40,
+        "reason": "É o valor a pagar desta competência; 193,02 só vale após o vencimento.",
+    },
+    "items": [
+        {
+            "date": "2026-07-31",
+            "description": "Consumo de energia - 178 kWh",
+            "amount": 142.30,
+            "type": "componente",
+        },
+        {
+            "date": "2026-07-31",
+            "description": "Contribuição de iluminação pública",
+            "amount": 12.45,
+            "type": "componente",
+        },
+        {
+            "date": "2026-07-31",
+            "description": "Bandeira tarifária amarela",
+            "amount": 4.90,
+            "type": "componente",
+        },
+        {
+            "date": "2026-07-31",
+            "description": "Tributos (ICMS, PIS e COFINS)",
+            "amount": 27.75,
+            "type": "componente",
+        },
+    ],
+    "confidence": 0.93,
+    "summary": "parece ser uma conta de luz da Energia Aurora de julho, no valor de R$ 187,40",
+}
+
+CONTA_LUZ = InvoiceFixture(
+    name="conta_luz_com_composicao",
+    raw_text=CONTA_LUZ_TEXT,
+    ai_document=CONTA_LUZ_DOCUMENT,
+    anchor_label="TOTAL A PAGAR",
+    anchor_total=187.40,
+    expected_purchases=(
+        ("Consumo de energia - 178 kWh", 142.30),
+        ("Contribuição de iluminação pública", 12.45),
+        ("Bandeira tarifária amarela", 4.90),
+        ("Tributos (ICMS, PIS e COFINS)", 27.75),
+    ),
+    expected_status="ok",
+    forbidden_amounts=(193.02, 165.20),
+)
+
+
+# --------------------------------------------------------------------------
+# Arquétipo condomínio: cobrança única sem composição, um item só.
+# --------------------------------------------------------------------------
+
+CONDOMINIO_TEXT = """CONDOMINIO RESIDENCIAL AURORA
+Boleto de taxa condominial - competência 08/2026
+Unidade 00 - bloco 0 - vencimento em 05/08/2026
+
+Taxa condominial ordinária R$ 640,00
+
+Valor a pagar R$ 640,00
+Após o vencimento, com multa de 2% e juros: R$ 652,80
+"""
+
+CONDOMINIO_DOCUMENT = {
+    "issuer": "Residencial Aurora",
+    "doc_type": "condominio",
+    "suggested_category": "Condomínio",
+    "period": "2026-08",
+    "due_date": "2026-08-05",
+    "totals": [
+        {"label_original": "Valor a pagar", "value": 640.00},
+        {
+            "label_original": "Após o vencimento, com multa de 2% e juros",
+            "value": 652.80,
+        },
+    ],
+    "reconciliation_anchor": {
+        "label_original": "Valor a pagar",
+        "value": 640.00,
+        "reason": "É o valor a pagar da competência; 652,80 só vale depois do vencimento.",
+    },
+    "items": [
+        {
+            "date": "2026-08-05",
+            "description": "Taxa condominial ordinária",
+            "amount": 640.00,
+            "type": "componente",
+        },
+    ],
+    "confidence": 0.96,
+    "summary": "parece ser um boleto de condomínio do Residencial Aurora de agosto, no valor de R$ 640,00",
+}
+
+CONDOMINIO = InvoiceFixture(
+    name="condominio_item_unico",
+    raw_text=CONDOMINIO_TEXT,
+    ai_document=CONDOMINIO_DOCUMENT,
+    anchor_label="Valor a pagar",
+    anchor_total=640.00,
+    expected_purchases=(("Taxa condominial ordinária", 640.00),),
+    expected_status="ok",
+    forbidden_amounts=(652.80,),
+)
+
+
 ALL_FIXTURES: List[InvoiceFixture] = [
     ITAU,
     ITAU_OVEREXTRACTED,
     NUBANK,
     NEON,
     NEON_GAP,
+    CONTA_LUZ,
+    CONDOMINIO,
 ]
+
+CARD_FIXTURES: List[InvoiceFixture] = [ITAU, ITAU_OVEREXTRACTED, NUBANK, NEON, NEON_GAP]
+
+SINGLE_CHARGE_FIXTURES: List[InvoiceFixture] = [CONTA_LUZ, CONDOMINIO]
 
 FIXTURES_BY_NAME: Dict[str, InvoiceFixture] = {
     fixture.name: fixture for fixture in ALL_FIXTURES
