@@ -50,8 +50,17 @@ RESPONSE_FORMAT_JSON_OBJECT = "json_object"
 _UNSUPPORTED_FORMAT_STATUS = {400, 404, 415, 422}
 
 
+# O secret usado no GitHub Actions se chama GROQ_KEY; aceitamos os dois nomes
+# para a chave valer igual no deploy e no ambiente local.
+GROQ_API_KEY_ENV_VARS = ("GROQ_API_KEY", "GROQ_KEY")
+
+
 def get_groq_api_key() -> str:
-    return (os.getenv("GROQ_API_KEY") or "").strip()
+    for env_var in GROQ_API_KEY_ENV_VARS:
+        key = (os.getenv(env_var) or "").strip()
+        if key:
+            return key
+    return ""
 
 
 def get_groq_model() -> str:

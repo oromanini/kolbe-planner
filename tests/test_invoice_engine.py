@@ -49,6 +49,7 @@ class FakeRequests:
 @pytest.fixture
 def groq_env(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.delenv("GROQ_KEY", raising=False)
     monkeypatch.delenv("GROQ_INVOICE_MODEL", raising=False)
     monkeypatch.delenv("GROQ_INVOICE_RESPONSE_FORMAT", raising=False)
 
@@ -66,10 +67,31 @@ def install_requests(monkeypatch, responses):
 
 def test_groq_client_requires_api_key(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_KEY", raising=False)
     fake = install_requests(monkeypatch, [FakeResponse(chat_completion("{}"))])
 
     assert invoice_ai.extract_invoice_document("fatura") is None
     assert fake.calls == []
+
+
+def test_groq_client_accepts_groq_key_env_var(monkeypatch):
+    """O secret do GitHub Actions se chama GROQ_KEY."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_KEY", "secret-do-actions")
+    fake = install_requests(
+        monkeypatch,
+        [FakeResponse(chat_completion(json.dumps(invoices.NEON.ai_document)))],
+    )
+
+    assert invoice_ai.extract_invoice_document(invoices.NEON.raw_text) is not None
+    assert fake.calls[0]["headers"]["Authorization"] == "Bearer secret-do-actions"
+
+
+def test_groq_api_key_prefers_the_canonical_env_var(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "canonica")
+    monkeypatch.setenv("GROQ_KEY", "do-actions")
+
+    assert groq_client.get_groq_api_key() == "canonica"
 
 
 def test_groq_client_sends_json_schema_and_parses_document(groq_env, monkeypatch):
