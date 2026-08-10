@@ -139,6 +139,10 @@ export default function FinancialPlanner() {
   const [contestTarget, setContestTarget] = useState(null);
   const [contestMessage, setContestMessage] = useState("");
   const [isSubmittingContest, setIsSubmittingContest] = useState(false);
+  const [editingDocumentId, setEditingDocumentId] = useState(null);
+  const [draftPlan, setDraftPlan] = useState([]);
+  const [draftCategory, setDraftCategory] = useState("");
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [selectedCategoryName, setSelectedCategoryName] = useState(null);
   const invoiceFileInputRef = useRef(null);
 
@@ -411,6 +415,80 @@ export default function FinancialPlanner() {
     const rejected = await handleInvoiceDocumentAction(doc, "reject");
     if (rejected) {
       toast.success("Documento descartado. Nada foi lançado.");
+    }
+  };
+
+  const openInvoiceDraftEditor = (doc) => {
+    setEditingDocumentId(doc.job_id);
+    setDraftCategory(doc.category_name || "");
+    setDraftPlan(
+      (doc.expense_plan || []).map((entry) => ({
+        name: entry.name,
+        amount: formatCurrencyInput(String(Math.round((entry.amount || 0) * 100))),
+      })),
+    );
+  };
+
+  const closeInvoiceDraftEditor = () => {
+    setEditingDocumentId(null);
+    setDraftPlan([]);
+    setDraftCategory("");
+  };
+
+  const updateDraftItem = (index, field, value) => {
+    setDraftPlan((current) =>
+      current.map((entry, position) => (position === index ? { ...entry, [field]: value } : entry)),
+    );
+  };
+
+  const removeDraftItem = (index) => {
+    setDraftPlan((current) => current.filter((_entry, position) => position !== index));
+  };
+
+  const addDraftItem = () => {
+    setDraftPlan((current) => [...current, { name: "", amount: "0,00" }]);
+  };
+
+  const draftPlanTotal = useMemo(
+    () => draftPlan.reduce((total, entry) => total + parseCurrencyInput(entry.amount), 0),
+    [draftPlan],
+  );
+
+  const handleSaveInvoiceDraft = async (doc) => {
+    if (isSavingDraft) return;
+
+    setIsSavingDraft(true);
+    try {
+      const response = await apiRequest(`/finance/invoice-reader/jobs/${doc.job_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category_name: draftCategory.trim(),
+          expense_plan: draftPlan.map((entry) => ({
+            name: entry.name.trim(),
+            amount: parseCurrencyInput(entry.amount),
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        throw new Error(errorPayload?.detail || "Não foi possível salvar as correções");
+      }
+
+      const saved = await response.json();
+      await loadInvoiceDocuments();
+      closeInvoiceDraftEditor();
+
+      if (saved.reconciled) {
+        toast.success("Correções salvas. A conferência fechou.");
+      } else {
+        toast.warning(saved.review_warning || "Correções salvas, mas a conferência ainda não fechou.");
+      }
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Não foi possível salvar as correções"));
+    } finally {
+      setIsSavingDraft(false);
     }
   };
 
@@ -1435,6 +1513,7 @@ export default function FinancialPlanner() {
                     const isPending = INVOICE_PENDING_STATUSES.includes(doc.status);
                     const isUnderReview = doc.status === "aguardando_revisao";
                     const isBusy = invoiceDocumentInAction === doc.job_id;
+                    const isEditing = editingDocumentId === doc.job_id;
 
                     return (
                       <div key={doc.job_id} className="rounded-xl border border-white/10 p-4 bg-slate-950/40">
@@ -1480,9 +1559,109 @@ export default function FinancialPlanner() {
                             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                             <span>
                               A conferência não fechou: {doc.review_warning || "a soma lida não bate com o total do documento."} Não
-                              aprove sem checar o PDF — conteste dizendo o que está errado.
+                              aprove sem checar o PDF — corrija os lançamentos ou conteste dizendo o que está errado.
                             </span>
                           </p>
+                        )}
+
+                        {doc.edited && (
+                          <p className="text-xs text-slate-400 mt-2">Você corrigiu esta leitura antes de aprovar.</p>
+                        )}
+
+                        {isEditing && (
+                          <div className="mt-4 rounded-lg border border-white/10 bg-white/5 p-3 space-y-3">
+                            <div>
+                              <label className="text-xs text-slate-300">Categoria</label>
+                              <input
+                                value={draftCategory}
+                                onChange={(e) => setDraftCategory(e.target.value)}
+                                className="w-full mt-1 px-3 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white text-sm"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              {draftPlan.map((entry, index) => (
+                                <div key={index} className="flex items-center gap-2">
+                                  <input
+                                    value={entry.name}
+                                    placeholder="Descrição"
+                                    onChange={(e) => updateDraftItem(index, "name", e.target.value)}
+                                    className="flex-1 px-3 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white text-sm"
+                                  />
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={entry.amount}
+                                    onChange={(e) => updateDraftItem(index, "amount", formatCurrencyInput(e.target.value))}
+                                    className="w-28 px-3 py-2 bg-slate-950/50 border border-white/10 rounded-lg text-white text-sm text-right"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    onClick={() => removeDraftItem(index)}
+                                    className="text-slate-400 hover:text-secondary shrink-0"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={addDraftItem}
+                                className="border-white/20 text-slate-200 hover:bg-white/10"
+                              >
+                                <Plus className="w-4 h-4" />
+                                Adicionar lançamento
+                              </Button>
+                              <p className="text-xs text-slate-300">
+                                Soma: <span className="text-white">{formatCurrency(draftPlanTotal)}</span>
+                                {typeof doc.plan_target === "number" && (
+                                  <>
+                                    {" "}
+                                    • precisa bater{" "}
+                                    <span
+                                      className={
+                                        Math.round(draftPlanTotal * 100) === Math.round(doc.plan_target * 100)
+                                          ? "text-emerald-300"
+                                          : "text-secondary"
+                                      }
+                                    >
+                                      {formatCurrency(doc.plan_target)}
+                                    </span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={isSavingDraft}
+                                onClick={() => handleSaveInvoiceDraft(doc)}
+                                className="bg-primary hover:bg-primary/90 text-white"
+                              >
+                                {isSavingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                Salvar correções
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={isSavingDraft}
+                                onClick={closeInvoiceDraftEditor}
+                                className="text-slate-400 hover:text-white hover:bg-white/10"
+                              >
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
                         )}
 
                         {doc.errors?.length > 0 && <p className="text-xs text-secondary mt-2">{doc.errors[0]}</p>}
@@ -1500,11 +1679,24 @@ export default function FinancialPlanner() {
                                 type="button"
                                 size="sm"
                                 disabled={isBusy || doc.reconciled === false}
-                                onClick={() => handleApproveInvoiceDocument(document)}
+                                onClick={() => handleApproveInvoiceDocument(doc)}
                                 className="bg-emerald-600 hover:bg-emerald-600/90 text-white"
                               >
                                 {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                                 Aprovar
+                              </Button>
+                            )}
+                            {isUnderReview && !isEditing && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={isBusy}
+                                onClick={() => openInvoiceDraftEditor(doc)}
+                                className="border-white/20 text-slate-200 hover:bg-white/10"
+                              >
+                                <Pencil className="w-4 h-4" />
+                                Corrigir
                               </Button>
                             )}
                             <Button
@@ -1513,7 +1705,7 @@ export default function FinancialPlanner() {
                               variant="outline"
                               disabled={isBusy}
                               onClick={() => {
-                                setContestTarget(document);
+                                setContestTarget(doc);
                                 setContestMessage("");
                               }}
                               className="border-white/20 text-slate-200 hover:bg-white/10"
@@ -1526,7 +1718,7 @@ export default function FinancialPlanner() {
                               size="sm"
                               variant="ghost"
                               disabled={isBusy}
-                              onClick={() => handleRejectInvoiceDocument(document)}
+                              onClick={() => handleRejectInvoiceDocument(doc)}
                               className="text-slate-400 hover:text-white hover:bg-white/10"
                             >
                               <Trash2 className="w-4 h-4" />

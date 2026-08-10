@@ -20,7 +20,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Tuple
 import uuid
 from datetime import datetime, timezone, timedelta
 import hashlib
@@ -47,6 +47,7 @@ try:  # pragma: no cover - depende de como o app é iniciado
         normalize_doc_type,
         reconcile_invoice_document,
         select_items_matching_expected_total,
+        to_cents,
     )
 except ImportError:  # o Dockerfile roda `uvicorn server:app` de dentro de backend/
     from invoice_ai import (  # noqa: F401
@@ -61,6 +62,7 @@ except ImportError:  # o Dockerfile roda `uvicorn server:app` de dentro de backe
         normalize_doc_type,
         reconcile_invoice_document,
         select_items_matching_expected_total,
+        to_cents,
     )
 
 
@@ -1270,6 +1272,23 @@ class InvoiceContestRequest(BaseModel):
     message: str
 
 
+class InvoiceDraftItem(BaseModel):
+    name: str
+    amount: float
+
+
+class InvoiceDraftUpdateRequest(BaseModel):
+    """Edição do rascunho antes de aprovar. Campo ausente não é alterado."""
+
+    expense_plan: Optional[List[InvoiceDraftItem]] = None
+    category_name: Optional[str] = None
+
+
+# Teto de itens no plano editado: uma fatura real não passa disso, e sem limite
+# o payload de edição é uma porta aberta.
+INVOICE_MAX_PLAN_ITEMS = 500
+
+
 # Estados de um documento no fluxo de revisão humana.
 INVOICE_STATUS_ANALYZING = "analisando"
 INVOICE_STATUS_AWAITING_REVIEW = "aguardando_revisao"
@@ -1545,6 +1564,13 @@ def build_invoice_draft(document: dict, reconciliation: dict, raw_text: str) -> 
             "ai_confidence": document.get("confidence"),
             "reconciliation_status": reconciliation["status"],
             "reconciliation_anchor_label": reconciliation["anchor_label"],
+            "plan_target": invoice_plan_target(reconciliation),
+            # A leitura original da IA, preservada para comparar com o que o
+            # usuário aprovou de fato. É o sinal do aprendizado por emissor.
+            "ai_expense_plan": [dict(entry) for entry in draft["expense_plan"]],
+            "ai_category_name": draft["category_name"],
+            "edited": False,
+            "edited_at": None,
             "reconciled": reconciled,
             "review_warning": (
                 None if reconciled else invoice_gate_message(reconciliation)
@@ -1557,6 +1583,60 @@ def build_invoice_draft(document: dict, reconciliation: dict, raw_text: str) -> 
         }
     )
     return draft
+
+
+def invoice_plan_target(reconciliation: dict) -> Optional[float]:
+    """Quanto o plano de gastos precisa somar para o documento estar conferido.
+
+    Documento conferido: o alvo é a soma que a conciliação abençoou, e não a
+    âncora — em ``gap_covered`` os encargos explicam a diferença e ficam fora do
+    plano, então exigir a âncora quebraria um documento que já está certo.
+
+    Documento não conferido: o alvo é a âncora. É o que permite a edição
+    destravar o que a leitura não fechou — o usuário corrige o item que faltava
+    e a soma alcança o total do documento.
+
+    Sem âncora não há alvo: não existe contra o que conferir, e nenhuma edição
+    pode destravar. Esse documento só sai por contestação.
+    """
+    if reconciliation.get("status") in RECONCILED_STATUSES:
+        return reconciliation.get("purchase_total")
+    return reconciliation.get("anchor_total")
+
+
+def invoice_plan_total(plan: Optional[List[dict]]) -> float:
+    return round(sum(float(entry.get("amount") or 0) for entry in plan or []), 2)
+
+
+def evaluate_invoice_plan(
+    plan: Optional[List[dict]], plan_target: Optional[float], regime: Optional[str]
+) -> Tuple[bool, Optional[str]]:
+    """Reaplica a conferência aritmética ao plano depois de uma edição."""
+    plan_total = invoice_plan_total(plan)
+
+    if plan_target is None:
+        if regime == REGIME_CARD:
+            return False, (
+                "A IA não identificou o total de compras da fatura para conferir "
+                "a soma dos lançamentos."
+            )
+        return False, (
+            "A IA não identificou o valor a pagar do documento para conferir a "
+            "soma dos componentes."
+        )
+
+    if to_cents(plan_total) == to_cents(plan_target):
+        return True, None
+
+    if regime == REGIME_CARD:
+        return False, (
+            f"A soma dos lançamentos ({plan_total:.2f}) não bate com o total "
+            f"conferido da fatura ({plan_target:.2f})."
+        )
+    return False, (
+        f"A soma dos componentes ({plan_total:.2f}) não bate com o valor a pagar "
+        f"do documento ({plan_target:.2f})."
+    )
 
 
 def invoice_gate_message(reconciliation: dict) -> str:
@@ -2245,7 +2325,12 @@ def build_invoice_document_record(
         "parsed_total": None,
         "parsed_count": 0,
         "amount_total": None,
+        "plan_target": None,
         "expense_plan": [],
+        "ai_expense_plan": [],
+        "ai_category_name": None,
+        "edited": False,
+        "edited_at": None,
         "contestations": [],
         "attempts": 0,
         "created_expense_ids": [],
@@ -2358,6 +2443,89 @@ async def get_owned_invoice_document(job_id: str, user_id: str) -> dict:
     return document
 
 
+@api_router.patch("/finance/invoice-reader/jobs/{job_id}")
+async def update_invoice_reader_draft(
+    job_id: str,
+    payload: InvoiceDraftUpdateRequest,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Corrige o rascunho sem gastar uma contestação.
+
+    Errar uma descrição em 23 lançamentos não deveria custar uma releitura
+    inteira da IA. A conferência aritmética é reaplicada a cada edição: o
+    portão da aprovação continua sendo o mesmo, agora sobre o plano do usuário.
+    """
+    user = await get_current_user(session_token, authorization)
+    document = await get_owned_invoice_document(job_id, user.user_id)
+
+    if document.get("status") != INVOICE_STATUS_AWAITING_REVIEW:
+        raise HTTPException(
+            status_code=409,
+            detail="Só dá para editar um documento que está aguardando revisão.",
+        )
+
+    patch: dict = {}
+
+    if payload.category_name is not None:
+        category_name = normalize_category_name(payload.category_name)
+        if not category_name:
+            raise HTTPException(
+                status_code=400, detail="A categoria não pode ficar vazia."
+            )
+        patch["category_name"] = category_name
+
+    if payload.expense_plan is not None:
+        if len(payload.expense_plan) > INVOICE_MAX_PLAN_ITEMS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Um documento não pode ter mais de {INVOICE_MAX_PLAN_ITEMS} lançamentos.",
+            )
+
+        plan = []
+        for entry in payload.expense_plan:
+            name = re.sub(r"\s+", " ", entry.name or "").strip()
+            if not name:
+                raise HTTPException(
+                    status_code=400, detail="Todo lançamento precisa de uma descrição."
+                )
+            amount = round(float(entry.amount), 2)
+            if amount <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"O valor de '{name}' precisa ser maior que zero.",
+                )
+            plan.append({"name": name, "amount": amount})
+
+        if not plan:
+            raise HTTPException(
+                status_code=400,
+                detail="Um documento sem lançamentos não pode ser aprovado. Rejeite-o.",
+            )
+
+        patch["expense_plan"] = plan
+        patch["parsed_count"] = len(plan)
+        patch["parsed_total"] = invoice_plan_total(plan)
+        patch["amount_total"] = patch["parsed_total"]
+
+    if not patch:
+        return public_invoice_document(document)
+
+    merged = {**document, **patch}
+    reconciled, warning = evaluate_invoice_plan(
+        merged.get("expense_plan"), merged.get("plan_target"), merged.get("regime")
+    )
+    patch["reconciled"] = reconciled
+    patch["review_warning"] = warning
+    patch["edited"] = True
+    patch["edited_at"] = datetime.now(timezone.utc).isoformat()
+
+    await _set_invoice_job(job_id, patch, user.user_id)
+    return public_invoice_document(
+        await get_owned_invoice_document(job_id, user.user_id)
+    )
+
+
 @api_router.post("/finance/invoice-reader/jobs/{job_id}/approve")
 async def approve_invoice_reader_document(
     job_id: str,
@@ -2379,13 +2547,14 @@ async def approve_invoice_reader_document(
         )
 
     # O portão: nada vira gasto sem conferência aritmética, em nenhum tipo de
-    # documento.
-    if document.get("reconciliation_status") not in RECONCILED_STATUSES:
+    # documento. Depois de uma edição quem responde é `reconciled`, recalculado
+    # sobre o plano do usuário — não o status da leitura original da IA.
+    if not document.get("reconciled"):
         raise HTTPException(
             status_code=409,
             detail=(
                 f"{document.get('review_warning') or 'A conferência da leitura não fechou.'} "
-                "Conteste a leitura ou adicione os gastos manualmente."
+                "Corrija os lançamentos, conteste a leitura ou adicione os gastos manualmente."
             ),
         )
 
