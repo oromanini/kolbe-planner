@@ -43,58 +43,173 @@
         @apply bg-slate-950/80 backdrop-blur-md border border-white/5 rounded-2xl;
     }
 
-    /* Cork board used by the goals board view (post-it style). */
-    .cork-board {
-        background-color: #A9743F;
+    /* Goals board: a lit control panel, with each goal pinned as a card. */
+    .goal-board {
+        background-color: #070B14;
         background-image:
-            radial-gradient(circle at 20% 30%, rgba(92, 52, 18, 0.16) 0 1.5px, transparent 2px),
-            radial-gradient(circle at 70% 15%, rgba(255, 232, 190, 0.14) 0 1px, transparent 1.5px),
-            radial-gradient(circle at 45% 75%, rgba(92, 52, 18, 0.13) 0 1.5px, transparent 2px),
-            radial-gradient(circle at 85% 60%, rgba(255, 232, 190, 0.1) 0 1.5px, transparent 2px),
-            radial-gradient(circle at 12% 85%, rgba(70, 38, 12, 0.14) 0 2px, transparent 2.5px),
-            radial-gradient(circle at 60% 45%, rgba(120, 72, 30, 0.18) 0 3px, transparent 4px),
-            radial-gradient(ellipse at 50% 35%, rgba(255, 216, 160, 0.18) 0%, transparent 70%),
-            linear-gradient(140deg, #BE8853 0%, #A06C39 55%, #875626 100%);
-        background-size: 23px 19px, 17px 29px, 31px 23px, 41px 37px, 53px 47px, 89px 79px, 100% 100%, 100% 100%;
+            linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+            radial-gradient(ellipse 80% 60% at 50% -10%, rgba(205, 28, 51, 0.16) 0%, transparent 70%),
+            linear-gradient(165deg, #0D1526 0%, #080C17 60%, #05080F 100%);
+        background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
+        border: 1px solid rgba(148, 163, 184, 0.12);
     }
 
-    .cork-board::after {
+    .goal-board::after {
         content: '';
         position: absolute;
         inset: 0;
         pointer-events: none;
-        box-shadow: inset 0 0 120px rgba(60, 32, 10, 0.55);
+        box-shadow: inset 0 0 140px rgba(3, 6, 14, 0.9);
     }
 
-    .post-it {
-        border-radius: 2px;
+    .goal-board__eyebrow {
+        font-family: 'Manrope', sans-serif;
+        font-size: 0.625rem;
+        font-weight: 700;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: #64748B;
+    }
+
+    .goal-board__meter {
+        height: 0.375rem;
+        border-radius: 9999px;
+        background: rgba(148, 163, 184, 0.14);
+        overflow: hidden;
+    }
+
+    .goal-board__meter > span {
+        display: block;
+        height: 100%;
+        border-radius: 9999px;
+        background: linear-gradient(90deg, #CD1C33, #E63946);
+        box-shadow: 0 0 14px rgba(205, 28, 51, 0.65);
+    }
+
+    .goal-board__action {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.625rem 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.75);
+        color: #E2E8F0;
+        font-family: 'Manrope', sans-serif;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .goal-board__action:hover {
+        border-color: rgba(205, 28, 51, 0.6);
+        color: #FFFFFF;
+        box-shadow: 0 0 22px rgba(205, 28, 51, 0.25);
+    }
+
+    .goal-note {
+        position: relative;
+        border-radius: 0.875rem;
+        border: 1px solid rgb(var(--goal-rgb) / 0.35);
+        background:
+            linear-gradient(155deg, rgb(var(--goal-rgb) / 0.14) 0%, rgba(255, 255, 255, 0.03) 42%, rgba(2, 6, 14, 0.5) 100%);
         box-shadow:
-            0 14px 26px -12px rgba(0, 0, 0, 0.75),
-            0 2px 4px rgba(0, 0, 0, 0.35);
-        transition: box-shadow 0.2s ease;
+            0 18px 36px -22px rgba(0, 0, 0, 0.95),
+            inset 0 1px 0 rgba(255, 255, 255, 0.07);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
 
-    .post-it:hover {
-        box-shadow:
-            0 22px 38px -14px rgba(0, 0, 0, 0.8),
-            0 3px 6px rgba(0, 0, 0, 0.4);
-    }
-
-    .post-it.is-done {
-        filter: saturate(0.85);
-    }
-
-    .board-pin {
+    /* Corner bracket: reads as an instrument panel, and marks the card's edge
+       against the board grid. */
+    .goal-note::after {
+        content: '';
         position: absolute;
-        top: 0.85rem;
+        top: 0.75rem;
+        right: 0.75rem;
+        width: 0.75rem;
+        height: 0.75rem;
+        border-top: 2px solid rgb(var(--goal-rgb) / 0.5);
+        border-right: 2px solid rgb(var(--goal-rgb) / 0.5);
+        border-top-right-radius: 0.25rem;
+    }
+
+    .goal-note:hover {
+        border-color: rgb(var(--goal-rgb) / 0.7);
+        box-shadow:
+            0 26px 44px -22px rgba(0, 0, 0, 1),
+            0 0 32px -6px rgb(var(--goal-rgb) / 0.35),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+
+    .goal-note.is-done {
+        border-color: rgb(var(--goal-rgb) / 0.22);
+        background:
+            repeating-linear-gradient(135deg, rgb(var(--goal-rgb) / 0.05) 0 6px, transparent 6px 12px),
+            linear-gradient(155deg, rgb(var(--goal-rgb) / 0.07) 0%, rgba(2, 6, 14, 0.55) 100%);
+    }
+
+    /* The pin: a lit node holding the card to the board. */
+    .goal-note__led {
+        position: absolute;
+        top: -0.3125rem;
         left: 50%;
-        width: 1.35rem;
-        height: 1.35rem;
+        width: 0.625rem;
+        height: 0.625rem;
         transform: translateX(-50%);
         border-radius: 9999px;
-        background:
-            radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.85) 0 12%, transparent 45%),
-            radial-gradient(circle at 50% 50%, var(--pin-color, #CD1C33) 0 60%, rgba(0, 0, 0, 0.45) 100%);
-        box-shadow: 0 3px 5px rgba(0, 0, 0, 0.45);
+        background: rgb(var(--goal-rgb));
+        box-shadow:
+            0 0 0 3px rgb(var(--goal-rgb) / 0.18),
+            0 0 16px rgb(var(--goal-rgb) / 0.9);
+    }
+
+    .goal-note__led::before {
+        content: '';
+        position: absolute;
+        top: 0.625rem;
+        left: 50%;
+        width: 1px;
+        height: 0.5rem;
+        transform: translateX(-50%);
+        background: linear-gradient(rgb(var(--goal-rgb) / 0.6), transparent);
+    }
+
+    .goal-note__meta {
+        font-family: ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, monospace;
+        letter-spacing: 0.06em;
+        color: #94A3B8;
+    }
+
+    .goal-note__check {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 0.625rem;
+        border: 2px solid rgb(var(--goal-rgb) / 0.65);
+        color: #FFFFFF;
+        transition: background-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .goal-note__check.is-on {
+        background: rgb(var(--goal-rgb));
+        border-color: rgb(var(--goal-rgb));
+        box-shadow: 0 0 18px rgb(var(--goal-rgb) / 0.55);
+    }
+
+    .goal-note__status {
+        font-family: 'Manrope', sans-serif;
+        font-size: 0.6875rem;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: #CBD5E1;
+    }
+
+    .goal-note--empty {
+        border-style: dashed;
     }
 }

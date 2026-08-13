@@ -390,7 +390,7 @@ export default function HabitManager() {
               }}
             />
             <p className="mt-4 text-center text-xs text-slate-500 font-body">
-              O quadro mostra apenas as metas de hoje. Clique em um post-it para marcar como concluída.
+              O quadro mostra apenas as metas de hoje. Clique em um card para marcar como concluída.
             </p>
           </>
         )}
