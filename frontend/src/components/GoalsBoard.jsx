@@ -80,8 +80,13 @@ export default function GoalsBoard({
 }) {
   const boardRef = useRef(null);
   const wakeLockRef = useRef(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+  // Fallback for browsers that block or don't implement the Fullscreen API
+  // (iOS Safari, embedded webviews): fill the viewport with CSS instead.
+  const [isExpanded, setIsExpanded] = useState(false);
   const [pendingHabitId, setPendingHabitId] = useState(null);
+
+  const isFullscreen = isNativeFullscreen || isExpanded;
 
   const todayHabits = useMemo(
     () => habits.filter((habit) => isScheduledToday(habit, todayKey)),
@@ -112,12 +117,24 @@ export default function GoalsBoard({
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === boardRef.current);
+      setIsNativeFullscreen(document.fullscreenElement === boardRef.current);
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
+
+  // The native Escape shortcut only exists in real fullscreen.
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsExpanded(false);
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isExpanded]);
 
   // Keep the TV/projector awake while the board is on screen.
   useEffect(() => {
@@ -147,14 +164,25 @@ export default function GoalsBoard({
   }, [isFullscreen]);
 
   const toggleFullscreen = async () => {
-    try {
-      if (document.fullscreenElement) {
+    if (document.fullscreenElement) {
+      try {
         await document.exitFullscreen();
-      } else {
-        await boardRef.current?.requestFullscreen();
+      } catch (error) {
+        console.error('Fullscreen error:', error);
       }
-    } catch (error) {
-      console.error('Fullscreen error:', error);
+      return;
+    }
+
+    if (isExpanded) {
+      setIsExpanded(false);
+      return;
+    }
+
+    try {
+      if (!boardRef.current?.requestFullscreen) throw new Error('unsupported');
+      await boardRef.current.requestFullscreen();
+    } catch {
+      setIsExpanded(true);
     }
   };
 
@@ -184,7 +212,9 @@ export default function GoalsBoard({
     <div
       ref={boardRef}
       data-testid="goals-board"
-      className={`cork-board relative overflow-hidden ${
+      className={`cork-board overflow-hidden ${
+        isExpanded ? 'fixed inset-0 z-[100]' : 'relative'
+      } ${
         isFullscreen
           ? 'h-screen w-screen flex flex-col p-6 sm:p-10'
           : 'rounded-3xl border-[10px] border-[#4a2f1b] shadow-2xl p-5 sm:p-8'
