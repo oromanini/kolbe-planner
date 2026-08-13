@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil, LayoutList, StickyNote } from "lucide-react";
 import { toast } from "sonner";
+import GoalsBoard from "../components/GoalsBoard";
 import { authFetch } from "../lib/api";
 import { BACKEND_URL } from "../lib/env";
 
@@ -19,6 +20,11 @@ const PRESET_COLORS = [
   { name: "Cyan", value: "#06B6D4" },
 ];
 
+const VIEW_MODE_STORAGE_KEY = "kolbe:goals-view-mode";
+
+// Board is meant to stay open on a TV/projector, so refresh it periodically.
+const BOARD_REFRESH_MS = 5 * 60 * 1000;
+
 const WEEKDAY_OPTIONS = [
   { label: "Seg", value: 0 },
   { label: "Ter", value: 1 },
@@ -30,10 +36,16 @@ const WEEKDAY_OPTIONS = [
 export default function HabitManager() {
   const navigate = useNavigate();
   const [habits, setHabits] = useState([]);
+  const [completions, setCompletions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [isCreatingHabit, setIsCreatingHabit] = useState(false);
   const [editingHabitId, setEditingHabitId] = useState(null);
+  const [viewMode, setViewMode] = useState(() => (
+    typeof window !== 'undefined' && window.localStorage.getItem(VIEW_MODE_STORAGE_KEY) === 'board'
+      ? 'board'
+      : 'list'
+  ));
 
   const todayKey = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
     .toISOString()
@@ -53,7 +65,21 @@ export default function HabitManager() {
 
   useEffect(() => {
     loadHabits();
+    loadCompletions();
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+
+    if (viewMode !== 'board') return undefined;
+
+    const interval = setInterval(() => {
+      loadHabits();
+      loadCompletions();
+    }, BOARD_REFRESH_MS);
+
+    return () => clearInterval(interval);
+  }, [viewMode]);
 
   const loadHabits = async () => {
     try {
@@ -65,6 +91,74 @@ export default function HabitManager() {
       toast.error('Erro ao carregar hábitos');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCompletions = async () => {
+    const [year, month] = todayKey.split('-');
+    try {
+      const res = await authFetch(`${API}/completions?year=${Number(year)}&month=${Number(month)}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to load completions');
+      const data = await res.json();
+      setCompletions(data);
+    } catch (error) {
+      console.error('Error loading completions:', error);
+    }
+  };
+
+  const handleToggleCompletion = async (habitId, date) => {
+    const previous = completions;
+
+    setCompletions((prev) => {
+      const index = prev.findIndex(
+        (completion) => completion.habit_id === habitId && completion.date === date,
+      );
+
+      if (index >= 0) {
+        return prev.map((completion, currentIndex) => (
+          currentIndex === index
+            ? { ...completion, completed: !completion.completed }
+            : completion
+        ));
+      }
+
+      return [...prev, { habit_id: habitId, date, completed: true }];
+    });
+
+    try {
+      const res = await authFetch(`${API}/completions/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ habit_id: habitId, date }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) {
+        throw new Error(result.detail || 'Não foi possível atualizar esta meta');
+      }
+
+      setCompletions((prev) => {
+        const index = prev.findIndex(
+          (completion) => completion.habit_id === habitId && completion.date === date,
+        );
+
+        if (index >= 0) {
+          return prev.map((completion, currentIndex) => (
+            currentIndex === index
+              ? { ...completion, completed: result.completed }
+              : completion
+          ));
+        }
+
+        return [...prev, { habit_id: habitId, date, completed: result.completed }];
+      });
+    } catch (error) {
+      setCompletions(previous);
+      console.error('Error toggling completion:', error);
+      toast.error(error.message || 'Erro ao atualizar');
     }
   };
 
@@ -259,8 +353,49 @@ export default function HabitManager() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {!showAddForm && !isEditing && habits.length < 10 && (
+      <main className={`${viewMode === 'board' ? 'max-w-7xl' : 'max-w-5xl'} mx-auto px-4 sm:px-6 lg:px-8 py-8`}>
+        <div className="mb-8 flex items-center justify-center">
+          <div className="flex items-center gap-1 p-1 border border-white/10 rounded-xl bg-white/5">
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              data-testid="goals-view-list"
+              className={`px-4 py-2 rounded-lg text-sm font-body flex items-center gap-2 transition-all ${viewMode === 'list' ? 'bg-primary/20 text-primary' : 'text-slate-300 hover:text-white'}`}
+            >
+              <LayoutList className="w-4 h-4" />
+              Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('board')}
+              data-testid="goals-view-board"
+              className={`px-4 py-2 rounded-lg text-sm font-body flex items-center gap-2 transition-all ${viewMode === 'board' ? 'bg-primary/20 text-primary' : 'text-slate-300 hover:text-white'}`}
+            >
+              <StickyNote className="w-4 h-4" />
+              Quadro de hoje
+            </button>
+          </div>
+        </div>
+
+        {viewMode === 'board' && (
+          <>
+            <GoalsBoard
+              habits={habits}
+              completions={completions}
+              todayKey={todayKey}
+              onToggleCompletion={handleToggleCompletion}
+              onCreateGoal={() => {
+                setViewMode('list');
+                setShowAddForm(true);
+              }}
+            />
+            <p className="mt-4 text-center text-xs text-slate-500 font-body">
+              O quadro mostra apenas as metas de hoje. Clique em um card para marcar como concluída.
+            </p>
+          </>
+        )}
+
+        {viewMode === 'list' && !showAddForm && !isEditing && habits.length < 10 && (
           <motion.button
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -274,7 +409,7 @@ export default function HabitManager() {
           </motion.button>
         )}
 
-        {(showAddForm || isEditing) && (
+        {viewMode === 'list' && (showAddForm || isEditing) && (
           <motion.form
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -436,7 +571,7 @@ export default function HabitManager() {
           </motion.form>
         )}
 
-        <div className="space-y-4">
+        <div className={`space-y-4 ${viewMode === 'board' ? 'hidden' : ''}`}>
           {habits.length === 0 ? (
             <div className="text-center py-20 glass-card">
               <p className="text-slate-400 font-body text-lg">Nenhum objetivo criado ainda.</p>
@@ -509,7 +644,7 @@ export default function HabitManager() {
           )}
         </div>
 
-        {habits.length >= 10 && (
+        {viewMode === 'list' && habits.length >= 10 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-8 p-6 bg-primary/10 border border-primary/30 rounded-2xl">
             <p className="text-sm font-body text-slate-300 text-center">
               Você atingiu o limite de <span className="text-primary font-bold">10 hábitos</span>. Remova um hábito para adicionar outro.
