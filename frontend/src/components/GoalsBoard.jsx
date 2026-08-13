@@ -16,15 +16,6 @@ const rgbChannels = (hex) => {
   return `${r} ${g} ${b}`;
 };
 
-// Deterministic tilt so a card keeps the same angle between renders — just
-// enough to read as pinned to the board rather than laid out by a grid.
-const tiltFor = (id) => {
-  const seed = String(id)
-    .split('')
-    .reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return ((seed % 5) - 2) * 0.35;
-};
-
 const frequencyLabel = (habit) => {
   if (habit.frequency === "custom") {
     const days = (habit.selected_weekdays || [])
@@ -220,7 +211,7 @@ export default function GoalsBoard({
           : 'rounded-3xl p-4 sm:p-8'
       }`}
     >
-      <div className="relative z-10 flex flex-wrap items-end justify-between gap-4 mb-6 sm:mb-8">
+      <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 mb-6 sm:mb-8">
         <div className="min-w-0">
           <p className="goal-board__eyebrow">Painel do dia</p>
           <p
@@ -303,11 +294,11 @@ export default function GoalsBoard({
                   key={habit.habit_id}
                   type="button"
                   layout
-                  initial={{ opacity: 0, y: -16, rotate: tiltFor(habit.habit_id) }}
-                  animate={{ opacity: 1, y: 0, rotate: tiltFor(habit.habit_id) }}
+                  initial={{ opacity: 0, y: -16 }}
+                  animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ delay: index * 0.04, type: 'spring', stiffness: 150, damping: 20 }}
-                  whileHover={{ y: -4, rotate: 0 }}
+                  whileHover={{ y: -4 }}
                   whileTap={{ scale: 0.985 }}
                   onClick={() => handleToggle(habit.habit_id)}
                   disabled={pendingHabitId === habit.habit_id}
@@ -320,11 +311,15 @@ export default function GoalsBoard({
                 >
                   <span className="goal-note__led" />
 
-                  <div className={`min-w-0 ${isFullscreen ? 'flex-1 flex flex-col justify-center' : ''}`}>
+                  {/* The title reserves two lines so the meta line — and every
+                      line below it — sits at the same height on every card. */}
+                  <div className="min-w-0">
                     <p
-                      className="font-heading text-white leading-tight break-words text-balance"
+                      className="font-heading text-white break-words text-balance line-clamp-2"
                       style={{
                         fontSize: isFullscreen ? 'clamp(1.35rem, 2.2vw, 2.75rem)' : 'clamp(1.05rem, 3.2vw, 1.5rem)',
+                        lineHeight: 1.15,
+                        minHeight: '2.3em',
                         textDecoration: completed ? 'line-through' : 'none',
                         textDecorationColor: `rgb(${channels} / 0.7)`,
                         opacity: completed ? 0.65 : 1,
