@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal, Tuple
 import uuid
 from datetime import datetime, timezone, timedelta
+import csv
 import hashlib
 import json
 import re
@@ -30,7 +31,7 @@ import asyncio
 import smtplib
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
-from io import BytesIO
+from io import BytesIO, StringIO
 import importlib
 import weakref
 
@@ -360,6 +361,58 @@ def validate_frequency_selection(frequency: str, selected_weekdays: List[int]):
         raise HTTPException(
             status_code=400, detail="Select at least one weekday for custom frequency"
         )
+
+
+# Mesma paleta oferecida no formulário manual (frontend/src/pages/HabitManager.jsx)
+HABIT_IMPORT_COLORS = [
+    "#CD1C33",
+    "#D4AF37",
+    "#3B82F6",
+    "#10B981",
+    "#8B5CF6",
+    "#F59E0B",
+    "#EC4899",
+    "#06B6D4",
+]
+
+WEEKDAY_TOKEN_MAP = {"seg": 0, "ter": 1, "qua": 2, "qui": 3, "sex": 4}
+
+HABIT_IMPORT_TEMPLATE_CSV = (
+    "name,start_date,end_date,frequency,weekdays\n"
+    "# Uma linha por meta. Apague as linhas de exemplo (começam com #) antes de importar.\n"
+    "# name: nome da meta, até 30 caracteres (obrigatório)\n"
+    "# start_date / end_date: formato AAAA-MM-DD; start_date não pode ser no passado\n"
+    "# frequency: daily (todos os dias), weekdays (dias úteis) ou custom (dias específicos)\n"
+    "# weekdays: só é usado quando frequency=custom. Use seg,ter,qua,qui,sex separados por vírgula\n"
+    "Beber 2L de água,2026-09-01,2026-12-31,daily,\n"
+    "Academia,2026-09-01,2026-12-31,custom,\"seg,qua,sex\"\n"
+    "Ler 10 páginas,2026-09-01,2026-12-31,weekdays,\n"
+)
+
+
+def parse_habit_import_weekdays(raw: str, errors: List[str]) -> List[int]:
+    if not raw:
+        errors.append("weekdays é obrigatório quando frequency=custom")
+        return []
+
+    days: List[int] = []
+    for token in re.split(r"[,;]", raw):
+        token = token.strip().lower()
+        if not token:
+            continue
+        if token.isdigit():
+            value = int(token)
+        elif token in WEEKDAY_TOKEN_MAP:
+            value = WEEKDAY_TOKEN_MAP[token]
+        else:
+            errors.append(f"dia inválido em weekdays: '{token}'")
+            continue
+        if value < 0 or value > 4:
+            errors.append(f"dia inválido em weekdays: '{token}' (use seg a sex)")
+            continue
+        days.append(value)
+
+    return sorted(set(days))
 
 
 def compose_goal_notifications(
@@ -977,6 +1030,143 @@ async def initialize_default_habits(
     await db.habits.insert_many(habits)
 
     return {"message": f"Created {len(habits)} default habits"}
+
+
+@api_router.get("/habits/import-template")
+async def get_habits_import_template(
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Modelo de CSV para importação em lote de metas"""
+    await get_current_user(session_token, authorization)
+
+    return Response(
+        content=HABIT_IMPORT_TEMPLATE_CSV,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=modelo-metas.csv"},
+    )
+
+
+@api_router.post("/habits/import")
+async def import_habits(
+    file: UploadFile = File(...),
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Importa metas em lote a partir de um CSV (respeita o limite de 10 metas)"""
+    user = await get_current_user(session_token, authorization)
+
+    filename = file.filename or "arquivo.csv"
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo .csv")
+
+    raw_bytes = await file.read()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Arquivo CSV vazio")
+
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível ler o arquivo. Salve como CSV em UTF-8",
+        )
+
+    reader = csv.DictReader(StringIO(text))
+    header_fields = {(c or "").strip().lower() for c in (reader.fieldnames or [])}
+    required_columns = {"name", "start_date", "end_date"}
+    if not required_columns.issubset(header_fields):
+        raise HTTPException(
+            status_code=400,
+            detail="Cabeçalho inválido. Use o modelo: name,start_date,end_date,frequency,weekdays",
+        )
+
+    field_map = {(c or "").strip().lower(): c for c in reader.fieldnames}
+
+    def get_field(row: dict, key: str) -> str:
+        source_key = field_map.get(key)
+        return (row.get(source_key) or "").strip() if source_key else ""
+
+    user_doc = await db.users.find_one(
+        {"user_id": user.user_id}, {"_id": 0, "settings": 1}
+    )
+    today_key = get_local_day_key(get_user_timezone(user_doc or {}))
+
+    existing_count = await db.habits.count_documents({"user_id": user.user_id})
+    last_habit = await db.habits.find_one(
+        {"user_id": user.user_id}, {"_id": 0, "order": 1}, sort=[("order", -1)]
+    )
+    next_order = (last_habit["order"] + 1) if last_habit else 0
+    slots_available = max(0, 10 - existing_count)
+
+    valid_docs = []
+    invalidas = []
+    ignoradas_limite = 0
+
+    for line_number, row in enumerate(reader, start=2):
+        name = get_field(row, "name")
+        if not name or name.startswith("#"):
+            continue
+
+        start_date = get_field(row, "start_date")
+        end_date = get_field(row, "end_date")
+        frequency = get_field(row, "frequency").lower() or "daily"
+        weekdays_raw = get_field(row, "weekdays")
+
+        errors: List[str] = []
+        if len(name) > 30:
+            errors.append("name deve ter no máximo 30 caracteres")
+        if frequency not in ("daily", "weekdays", "custom"):
+            errors.append("frequency deve ser daily, weekdays ou custom")
+
+        selected_weekdays: List[int] = []
+        if frequency == "custom":
+            selected_weekdays = parse_habit_import_weekdays(weekdays_raw, errors)
+
+        if not errors:
+            try:
+                ensure_period_is_valid(start_date, end_date, today_key)
+            except HTTPException as exc:
+                errors.append(str(exc.detail))
+
+        if errors:
+            invalidas.append(
+                {"linha": line_number, "name": name, "motivo": "; ".join(errors)}
+            )
+            continue
+
+        if len(valid_docs) >= slots_available:
+            ignoradas_limite += 1
+            continue
+
+        color = HABIT_IMPORT_COLORS[
+            (existing_count + len(valid_docs)) % len(HABIT_IMPORT_COLORS)
+        ]
+        habit = Habit(
+            habit_id=f"habit_{uuid.uuid4().hex[:12]}",
+            user_id=user.user_id,
+            name=name,
+            color=color,
+            icon="circle",
+            start_date=start_date,
+            end_date=end_date,
+            frequency=frequency,
+            selected_weekdays=selected_weekdays,
+            order=next_order + len(valid_docs),
+            created_at=datetime.now(timezone.utc),
+        )
+        doc = habit.model_dump()
+        doc["created_at"] = doc["created_at"].isoformat()
+        valid_docs.append(doc)
+
+    if valid_docs:
+        await db.habits.insert_many(valid_docs)
+
+    return {
+        "criadas": len(valid_docs),
+        "ignoradas_limite": ignoradas_limite,
+        "invalidas": invalidas,
+    }
 
 
 # ============ FINANCIAL MODELS ============

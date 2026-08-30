@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil, LayoutList, StickyNote } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Palette, Sparkles, Pencil, LayoutList, StickyNote, Upload } from "lucide-react";
 import { toast } from "sonner";
 import GoalsBoard from "../components/GoalsBoard";
+import HabitImportModal from "../components/HabitImportModal";
 import { authFetch } from "../lib/api";
 import { BACKEND_URL } from "../lib/env";
 
@@ -39,6 +40,7 @@ export default function HabitManager() {
   const [completions, setCompletions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [isCreatingHabit, setIsCreatingHabit] = useState(false);
   const [editingHabitId, setEditingHabitId] = useState(null);
   const [viewMode, setViewMode] = useState(() => (
@@ -391,17 +393,30 @@ export default function HabitManager() {
         )}
 
         {viewMode === 'list' && !showAddForm && !isEditing && (
-          <motion.button
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            whileHover={{ scale: 1.01 }}
-            onClick={() => setShowAddForm(true)}
-            data-testid="show-add-habit-form"
-            className="w-full mb-8 p-8 border-2 border-dashed border-white/10 rounded-2xl hover:border-primary/30 transition-all flex items-center justify-center gap-3 text-slate-400 hover:text-white font-body bg-white/5 backdrop-blur-sm"
-          >
-            <Plus className="w-6 h-6" />
-            <span className="font-medium">Adicionar novo objetivo</span>
-          </motion.button>
+          <div className="mb-8 flex flex-col sm:flex-row gap-4">
+            <motion.button
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileHover={{ scale: 1.01 }}
+              onClick={() => setShowAddForm(true)}
+              data-testid="show-add-habit-form"
+              className="flex-1 p-8 border-2 border-dashed border-white/10 rounded-2xl hover:border-primary/30 transition-all flex items-center justify-center gap-3 text-slate-400 hover:text-white font-body bg-white/5 backdrop-blur-sm"
+            >
+              <Plus className="w-6 h-6" />
+              <span className="font-medium">Adicionar novo objetivo</span>
+            </motion.button>
+            <motion.button
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              whileHover={{ scale: 1.01 }}
+              onClick={() => setShowImportModal(true)}
+              data-testid="show-habit-import-modal"
+              className="sm:w-64 p-8 border-2 border-dashed border-white/10 rounded-2xl hover:border-primary/30 transition-all flex items-center justify-center gap-3 text-slate-400 hover:text-white font-body bg-white/5 backdrop-blur-sm"
+            >
+              <Upload className="w-6 h-6" />
+              <span className="font-medium">Importar CSV</span>
+            </motion.button>
+          </div>
         )}
 
         {viewMode === 'list' && (showAddForm || isEditing) && (
@@ -640,6 +655,13 @@ export default function HabitManager() {
         </div>
 
       </main>
+
+      <HabitImportModal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onImported={loadHabits}
+        apiBase={API}
+      />
     </div>
   );
 }
