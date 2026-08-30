@@ -170,11 +170,6 @@ export default function HabitManager() {
       return false;
     }
 
-    if (!isEditing && habits.length >= 10) {
-      toast.error('Máximo de 10 hábitos atingido');
-      return false;
-    }
-
     if (!habitPayload.start_date || !habitPayload.end_date) {
       toast.error('Preencha as datas de início e fim do objetivo');
       return false;
@@ -349,7 +344,7 @@ export default function HabitManager() {
               Voltar à dashboard
             </button>
             <div className="text-sm text-slate-400 font-body px-4 py-2 bg-white/5 rounded-lg border border-white/10">
-              {habits.length} <span className="text-primary">/ 10</span>
+              {habits.length} <span className="text-primary">objetivos</span>
             </div>
           </div>
         </div>
@@ -397,7 +392,7 @@ export default function HabitManager() {
           </>
         )}
 
-        {viewMode === 'list' && !showAddForm && !isEditing && habits.length < 10 && (
+        {viewMode === 'list' && !showAddForm && !isEditing && (
           <div className="mb-8 flex flex-col sm:flex-row gap-4">
             <motion.button
               initial={{ opacity: 0, y: 20 }}
@@ -659,13 +654,6 @@ export default function HabitManager() {
           )}
         </div>
 
-        {viewMode === 'list' && habits.length >= 10 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-8 p-6 bg-primary/10 border border-primary/30 rounded-2xl">
-            <p className="text-sm font-body text-slate-300 text-center">
-              Você atingiu o limite de <span className="text-primary font-bold">10 hábitos</span>. Remova um hábito para adicionar outro.
-            </p>
-          </motion.div>
-        )}
       </main>
 
       <HabitImportModal

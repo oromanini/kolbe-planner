@@ -870,13 +870,8 @@ async def create_habit(
     session_token: Optional[str] = Cookie(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Create a new habit (max 10)"""
+    """Create a new habit"""
     user = await get_current_user(session_token, authorization)
-
-    # Check limit
-    count = await db.habits.count_documents({"user_id": user.user_id})
-    if count >= 10:
-        raise HTTPException(status_code=400, detail="Maximum 10 habits allowed")
 
     # Get next order
     last_habit = await db.habits.find_one(
