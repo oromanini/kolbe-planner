@@ -81,7 +81,7 @@ export default function TutorialModal({ onComplete, onClose, kolbeMode = false }
                   <div className="w-6 h-6 bg-primary/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
                     <Check className="w-4 h-4 text-primary" strokeWidth={3} />
                   </div>
-                  <span>Acompanhar até 10 hábitos diários simultaneamente</span>
+                  <span>Acompanhar quantos hábitos quiser simultaneamente</span>
                 </li>
                 <li className="flex items-start gap-3 text-sm font-body text-slate-300">
                   <div className="w-6 h-6 bg-primary/20 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
