@@ -79,6 +79,12 @@ def get_groq_model() -> str:
     ).strip() or DEFAULT_GROQ_INVOICE_MODEL
 
 
+def get_chat_model() -> str:
+    return (
+        os.getenv("GROQ_CHAT_MODEL") or get_groq_model()
+    ).strip() or get_groq_model()
+
+
 def get_response_format_mode() -> str:
     mode = (os.getenv("GROQ_INVOICE_RESPONSE_FORMAT") or RESPONSE_FORMAT_AUTO).strip()
     if mode not in {
@@ -313,5 +319,88 @@ def request_json(
         if verdict == _VERDICT_NEXT_MODE:
             continue
         return None
+
+    return None
+
+
+ALLOWED_CHAT_ROLES = {"system", "user", "assistant"}
+
+
+def request_chat(
+    *,
+    messages: List[dict],
+    model: Optional[str] = None,
+    temperature: float = 0.4,
+    max_completion_tokens: int = 1024,
+    timeout: int = GROQ_REQUEST_TIMEOUT_SECONDS,
+) -> Optional[str]:
+    """Chat de texto livre (sem ``response_format``).
+
+    ``messages`` segue o padrão OpenAI: ``[{"role": ..., "content": ...}]``.
+    Devolve o texto da resposta, ou ``None`` quando não há chave configurada,
+    quando a chamada falha ou quando a resposta vem vazia. Diferente de
+    ``request_json``, aqui um 429/5xx é retentado no mesmo formato (não há outro
+    formato para onde cair).
+    """
+    api_key = get_groq_api_key()
+    if not api_key:
+        return None
+
+    sanitized = [
+        {"role": m["role"], "content": m["content"]}
+        for m in messages
+        if m.get("role") in ALLOWED_CHAT_ROLES and (m.get("content") or "").strip()
+    ]
+    if not sanitized:
+        return None
+
+    import requests
+
+    payload = {
+        "model": (model or get_chat_model()),
+        "messages": sanitized,
+        "temperature": temperature,
+        "max_completion_tokens": max_completion_tokens,
+    }
+
+    max_retries = get_max_retries()
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(
+                f"{GROQ_BASE_URL}{GROQ_CHAT_COMPLETIONS_PATH}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+            status_code = getattr(response, "status_code", None)
+
+            if status_code in _RETRYABLE_STATUS:
+                if attempt >= max_retries:
+                    logger.warning(
+                        "Groq chat segue indisponível (HTTP %s) após %s tentativas.",
+                        status_code,
+                        attempt + 1,
+                    )
+                    return None
+                delay = retry_delay_seconds(response, attempt)
+                logger.warning(
+                    "Groq chat respondeu HTTP %s; nova tentativa em %.1fs.",
+                    status_code,
+                    delay,
+                )
+                _sleep(delay)
+                continue
+
+            response.raise_for_status()
+            body = response.json()
+        except Exception as exc:  # rede, HTTP ou corpo inválido
+            logger.warning("Falha na chamada de chat da Groq: %s", exc)
+            return None
+
+        content = (extract_message_content(body) or "").strip()
+        return content or None
 
     return None
