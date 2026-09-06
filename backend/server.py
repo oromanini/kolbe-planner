@@ -36,6 +36,11 @@ import importlib
 import weakref
 
 try:  # pragma: no cover - depende de como o app é iniciado
+    from backend import groq_client
+except ImportError:  # o Dockerfile roda `uvicorn server:app` de dentro de backend/
+    import groq_client
+
+try:  # pragma: no cover - depende de como o app é iniciado
     from backend.invoice_ai import (  # noqa: F401
         DOC_TYPE_CARD,
         DOC_TYPE_LABELS,
@@ -75,6 +80,13 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncMongoClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
+# Conexão somente-leitura usada pelo assistente financeiro. Se MONGO_URL_READONLY
+# não estiver definido, cai na mesma URL da conexão principal; o assistente ainda
+# assim só chama métodos de leitura (find/aggregate).
+readonly_mongo_url = os.getenv("MONGO_URL_READONLY") or mongo_url
+readonly_client = AsyncMongoClient(readonly_mongo_url)
+read_db = readonly_client[os.environ["DB_NAME"]]
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -82,6 +94,7 @@ async def lifespan(_app: FastAPI):
     await create_database_indexes()
     yield
     await client.close()
+    await readonly_client.close()
 
 
 # Create the main app without a prefix
@@ -2442,28 +2455,22 @@ async def update_savings(
 
 
 # Summary
-@api_router.get("/finance/summary")
-async def get_summary(
-    month: str,
-    session_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = Header(None),
-):
-    user = await get_current_user(session_token, authorization)
-
-    # Get incomes
-    incomes = await db.incomes.find(
-        {"user_id": user.user_id, "month": month}, {"_id": 0}
+async def compute_month_summary(user_id: str, month: str, database=None) -> dict:
+    """Agrega receitas/despesas de um mês. ``database`` permite usar a conexão
+    somente-leitura (``read_db``) a partir do assistente financeiro."""
+    if database is None:
+        database = db
+    incomes = await database.incomes.find(
+        {"user_id": user_id, "month": month}, {"_id": 0}
     ).to_list(1000)
     total_income = sum(i["amount"] for i in incomes)
 
-    # Get expenses
-    expenses = await db.expenses.find(
-        {"user_id": user.user_id, "month": month}, {"_id": 0}
+    expenses = await database.expenses.find(
+        {"user_id": user_id, "month": month}, {"_id": 0}
     ).to_list(1000)
     total_expenses = sum(e["amount"] for e in expenses)
 
-    # Category breakdown
-    category_breakdown = {}
+    category_breakdown: dict = {}
     for expense in expenses:
         cat = expense["category"]
         category_breakdown[cat] = category_breakdown.get(cat, 0) + expense["amount"]
@@ -2475,6 +2482,184 @@ async def get_summary(
         "balance": total_income - total_expenses,
         "category_breakdown": category_breakdown,
     }
+
+
+@api_router.get("/finance/summary")
+async def get_summary(
+    month: str,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+    return await compute_month_summary(user.user_id, month)
+
+
+# ============ ASSISTENTE FINANCEIRO (KOLBE) ============
+
+ASSISTANT_HISTORY_MAX_MESSAGES = 20
+ASSISTANT_MESSAGE_MAX_CHARS = 2000
+ASSISTANT_CONTEXT_MONTHS = 6
+ASSISTANT_MAX_ENTRIES_LISTED = 20
+ASSISTANT_MIN_INTERVAL_SECONDS = 3.0
+
+ASSISTANT_SYSTEM_PROMPT = (
+    "Você é o Kolbe, o assistente financeiro do Kolbe Planner. Você conversa em "
+    "português do Brasil, de forma direta, objetiva e acionável.\n"
+    "Use SOMENTE os dados do retrato financeiro fornecido abaixo para responder. "
+    "Se a informação pedida não estiver nos dados, diga que não tem esse dado no "
+    "planner e sugira como o usuário pode registrá-lo.\n"
+    "Você pode analisar gastos, apontar tendências, comparar meses e dar conselhos "
+    "práticos de organização financeira e corte de despesas.\n"
+    "Você NÃO é consultor de investimentos licenciado: não recomende compra ou venda "
+    "de ativos específicos nem prometa retorno. Para decisões de investimento, "
+    "oriente o usuário a procurar um profissional habilitado.\n"
+    "Valores estão em reais (R$). Seja conciso: no máximo alguns parágrafos curtos "
+    "ou uma lista objetiva.\n\n"
+    "=== RETRATO FINANCEIRO DO USUÁRIO ===\n{context}"
+)
+
+ASSISTANT_UNAVAILABLE_REPLY = (
+    "O assistente está indisponível no momento. Tente de novo em alguns instantes."
+)
+
+_assistant_last_call: dict = {}
+
+
+class AssistantMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=ASSISTANT_MESSAGE_MAX_CHARS)
+
+
+class AssistantChatRequest(BaseModel):
+    messages: List[AssistantMessage] = Field(min_length=1)
+
+
+def _recent_months(count: int) -> List[str]:
+    now = datetime.now(timezone.utc)
+    year, month = now.year, now.month
+    months: List[str] = []
+    for _ in range(count):
+        months.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return months
+
+
+async def build_user_finance_context(user_id: str) -> str:
+    months = _recent_months(ASSISTANT_CONTEXT_MONTHS)
+    current_month = months[0]
+
+    summaries = []
+    for month in months:
+        summary = await compute_month_summary(user_id, month, database=read_db)
+        summaries.append(summary)
+
+    expenses = await read_db.expenses.find(
+        {"user_id": user_id, "month": current_month}, {"_id": 0}
+    ).to_list(1000)
+    incomes = await read_db.incomes.find(
+        {"user_id": user_id, "month": current_month}, {"_id": 0}
+    ).to_list(1000)
+    savings = await read_db.savings.find({"user_id": user_id}, {"_id": 0}).to_list(1000)
+    categories = await read_db.financial_categories.find(
+        {"user_id": user_id}, {"_id": 0}
+    ).to_list(1000)
+
+    def top_entries(items: List[dict]) -> List[dict]:
+        ordered = sorted(items, key=lambda i: i.get("amount", 0), reverse=True)
+        return ordered[:ASSISTANT_MAX_ENTRIES_LISTED]
+
+    payload = {
+        "gerado_em": datetime.now(timezone.utc).isoformat(),
+        "mes_corrente": current_month,
+        "resumo_mensal": [
+            {
+                "mes": s["month"],
+                "receitas": round(s["total_income"], 2),
+                "despesas": round(s["total_expenses"], 2),
+                "saldo": round(s["balance"], 2),
+                "gastos_por_categoria": {
+                    k: round(v, 2) for k, v in s["category_breakdown"].items()
+                },
+            }
+            for s in summaries
+        ],
+        "despesas_mes_corrente": [
+            {
+                "nome": e.get("name"),
+                "valor": round(e.get("amount", 0), 2),
+                "categoria": e.get("category"),
+                "subcategoria": e.get("subcategory"),
+            }
+            for e in top_entries(expenses)
+        ],
+        "receitas_mes_corrente": [
+            {
+                "nome": i.get("name"),
+                "valor": round(i.get("amount", 0), 2),
+                "categoria": i.get("category"),
+            }
+            for i in top_entries(incomes)
+        ],
+        "reservas_e_investimentos": [
+            {
+                "nome": s.get("name"),
+                "tipo": s.get("type"),
+                "valor": round(s.get("amount", 0), 2),
+            }
+            for s in savings
+        ],
+        "categorias_cadastradas": [
+            {"nome": c.get("name"), "tipo": c.get("type")} for c in categories
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@api_router.post("/finance/assistant/chat")
+async def finance_assistant_chat(
+    request: AssistantChatRequest,
+    session_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+):
+    user = await get_current_user(session_token, authorization)
+
+    if len(request.messages) > ASSISTANT_HISTORY_MAX_MESSAGES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Histórico muito longo (máx. {ASSISTANT_HISTORY_MAX_MESSAGES} mensagens).",
+        )
+    if request.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=422, detail="A última mensagem deve ser do usuário."
+        )
+
+    now = datetime.now(timezone.utc).timestamp()
+    last_call = _assistant_last_call.get(user.user_id)
+    if last_call is not None and now - last_call < ASSISTANT_MIN_INTERVAL_SECONDS:
+        raise HTTPException(
+            status_code=429, detail="Aguarde alguns segundos antes de perguntar de novo."
+        )
+    _assistant_last_call[user.user_id] = now
+
+    if not groq_client.is_groq_configured():
+        return {"reply": ASSISTANT_UNAVAILABLE_REPLY}
+
+    context = await build_user_finance_context(user.user_id)
+    groq_messages = [
+        {
+            "role": "system",
+            "content": ASSISTANT_SYSTEM_PROMPT.format(context=context),
+        }
+    ] + [{"role": m.role, "content": m.content} for m in request.messages]
+
+    loop = asyncio.get_running_loop()
+    reply = await loop.run_in_executor(
+        None, lambda: groq_client.request_chat(messages=groq_messages)
+    )
+    return {"reply": reply or ASSISTANT_UNAVAILABLE_REPLY}
 
 
 def build_invoice_document_record(
